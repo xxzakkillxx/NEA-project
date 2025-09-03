@@ -31,8 +31,8 @@ def receive_messages(sock, username):
             break
 
 def main():
-    HOST = 'nea-project-production.up.railway.app'
-    PORT = 50007
+    HOST = 'tramway.proxy.rlwy.net'
+    PORT = 23620
 
     username = input("Enter your username: ")
 

@@ -15,8 +15,8 @@ def start_client_connection():
 
     try:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_socket.connect(('nea-project-production.up.railway.app', 50007))
-        print("[DEBUG] Connected to server at nea-project-production.up.railway.app:50007")
+        client_socket.connect(('tramway.proxy.rlwy.net', 23620))
+        print("[DEBUG] Connected to server at 'tramway.proxy.rlwy.net':23620")
 
         receive_thread = threading.Thread(target=receive_messages, daemon=True)
         receive_thread.start()
