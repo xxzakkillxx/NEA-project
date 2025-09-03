@@ -6,7 +6,7 @@ import hashlib
 import os
 
 HOST = '0.0.0.0'
-PORT = 50007
+PORT = int(os.environ.get('PORT', 50007))  # <-- dynamical port
 DB_PATH = 'game_data.db'
 
 clients = []
