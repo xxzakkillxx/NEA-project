@@ -28,6 +28,8 @@ def receive_messages(sock, username):
                         display_message = f"{sender_display}: {content}"
                         print(display_message)
                         chat_messages.append(display_message)
+                    else:
+                        continue
                 except json.JSONDecodeError as e:
                     print(f"[ERROR] Invalid JSON: {e} -> {line}")
 

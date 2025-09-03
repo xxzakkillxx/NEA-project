@@ -685,6 +685,9 @@ current_screen = "login"
 running = True
 clock = pygame.time.Clock()
 while running:
+    pygame.event.set_allowed(None)  # Restrict event types
+    pygame.event.set_allowed([pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP, pygame.MOUSEBUTTONDOWN, pygame.TEXTINPUT])
+    pygame.key.start_text_input()
     SCREEN.fill((255, 255, 255))
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
