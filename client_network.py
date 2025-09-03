@@ -36,8 +36,6 @@ def send_chat_message(raw_text, username):
         print(f"Sending to server: {message}")  # Debug print
         try:
             client_socket.sendall(message.encode())
-            # Show your own message in chat
-            chat_messages.append(f"You: {raw_text}")
         except Exception as e:
             print(f"Failed to send message: {e}")
 

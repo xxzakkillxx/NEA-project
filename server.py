@@ -84,12 +84,12 @@ def process_request(message, sender_conn=None):
         for client in clients:
             if client != sender_conn:
                 try:
-                    client.sendall(broadcast_msg.encode())
+                    client.sendall((broadcast_msg + "\n").encode())
                 except Exception as e:
                     print(f"[ERROR] Failed to send to client: {e}")
         # ✅ Also send it back to the sender so they see their own message
         try:
-            sender_conn.sendall(broadcast_msg.encode())
+            sender_conn.sendall((broadcast_msg + "\n").encode())
         except Exception as e:
             print(f"[ERROR] Failed to send to sender: {e}")
         return {"status": "success", "message": "Message sent"}

@@ -5,30 +5,36 @@ import threading
 chat_messages = []
 
 def receive_messages(sock, username):
+    buffer = ""
     while True:
         try:
-            message = sock.recv(1024).decode('utf-8')
-            if message:
-                data = json.loads(message)
-                if data.get("action") == "chat":
-                    sender = data.get("username", "Unknown")
-                    content = data.get("content", "")
-
-                    if sender == username:
-                        display_message = f"You: {content}"
-                    else:
-                        display_message = f"{sender}: {content}"
-
-                    print(display_message)
-                    chat_messages.append(display_message)
-                else:
-                    # Handle other message types if needed
-                    pass
-            else:
+            data = sock.recv(1024).decode('utf-8')
+            if not data:
                 break
+
+            buffer += data
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                if not line.strip():
+                    continue
+
+                print(f"[DEBUG] Raw received: {line}")
+                try:
+                    message = json.loads(line)
+                    if message.get("action") == "chat":
+                        sender = message.get("username", "Unknown")
+                        content = message.get("content", "")
+                        sender_display = "You" if sender == username else sender
+                        display_message = f"{sender_display}: {content}"
+                        print(display_message)
+                        chat_messages.append(display_message)
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Invalid JSON: {e} -> {line}")
+
         except Exception as e:
             print(f"[ERROR receiving message]: {e}")
             break
+
 
 def main():
     HOST = 'tramway.proxy.rlwy.net'
