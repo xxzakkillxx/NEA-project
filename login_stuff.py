@@ -4,7 +4,7 @@ import hashlib
 import os
 import re
 from datetime import datetime
-import client
+import client_network
 import socket
 
 pygame.init()
@@ -20,8 +20,8 @@ import json
 
 def send_request_to_server(request_dict):
     try:
-        client.client_socket.send(json.dumps(request_dict).encode())
-        response = client.client_socket.recv(4096).decode()
+        client_network.client_socket.send(json.dumps(request_dict).encode())
+        response = client_network.client_socket.recv(4096).decode()
         return json.loads(response)
     except Exception as e:
         print(f"Error communicating with server: {e}")
@@ -315,7 +315,7 @@ def draw_chat():
     start_y = chat_rect.top + 10
 
     wrapped_lines = []
-    for msg in client.chat_messages:
+    for msg in client_network.chat_messages:
         wrapped_lines.extend(wrap_text(msg, font, max_width))
 
     max_visible_lines = chat_box_height // line_height - 1
@@ -667,13 +667,13 @@ def dummy_login():
         current_screen = "admin_panel"
 
         # After setting current_user and switching screen
-        client.start_client_connection(current_user)
+        client_network.start_client_connection(current_user)
 
     else:
         current_screen = "welcome_screen"
 
         # After setting current_user and switching screen
-        client.start_client_connection(current_user)
+        client_network.start_client_connection(current_user)
 
 
 login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), dummy_login)
@@ -829,10 +829,10 @@ while running:
     pygame.display.flip()
     clock.tick(60)
 
-if client.client_connected and client.client_socket:
+if client_network.client_connected and client_network.client_socket:
     try:
-        client.client_socket.close()
-        client.client_connected = False
+        client_network.client_socket.close()
+        client_network.client_connected = False
         print("[DEBUG] Disconnected from server.")
     except Exception as e:
         print(f"[ERROR] Error closing socket: {e}")
