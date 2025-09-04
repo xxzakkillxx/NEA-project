@@ -4,7 +4,8 @@ import hashlib
 import os
 import re
 from datetime import datetime
-import client_network
+import client
+import socket
 
 pygame.init()
 WIDTH, HEIGHT = 800, 600
@@ -159,6 +160,19 @@ log_scroll_offset = 0
 client_socket = None
 receive_thread = None
 client_connected = False
+chat_input_active = False
+
+
+chat_scroll_offset = 0
+max_visible_chat_messages = 10  # or whatever fits your current chat box
+max_chat_scroll_offset = 0
+
+chat_box_width = 300
+chat_box_height = 280
+resizing_chat = False
+resize_start_mouse_pos = None
+resize_start_box_size = None
+auto_scroll = True
 
 chat_visible = False  # Start hidden
 chat_input_text = ""
@@ -216,6 +230,21 @@ def reset_user_password(username):
     # Clear inputs
     new_password_input.text = ""
     confirm_password_input.text = ""
+
+def wrap_text(text, font, max_width):
+    words = text.split(' ')
+    lines = []
+    current_line = ''
+
+    for word in words:
+        test_line = current_line + word + ' '
+        if font.size(test_line)[0] <= max_width:
+            current_line = test_line
+        else:
+            lines.append(current_line)
+            current_line = word + ' '
+    lines.append(current_line)
+    return lines
 
 def log_action(username, message):
     print(f"LOGGING: {username} - {message}")  # Debug print
@@ -280,26 +309,40 @@ def toggle_user_role(username):
     conn.close()
 
 def draw_chat():
-    # Background for chat box
-    chat_rect = pygame.Rect(WIDTH - 310, HEIGHT - 300, 300, 280)
+    global chat_box_width, chat_box_height, max_chat_scroll_offset
+
+    chat_rect = pygame.Rect(WIDTH - chat_box_width - 10, HEIGHT - chat_box_height - 30, chat_box_width, chat_box_height)
     pygame.draw.rect(SCREEN, (230, 230, 250), chat_rect)
     pygame.draw.rect(SCREEN, (100, 100, 150), chat_rect, 2)
 
-    # Draw last ~10 messages
+    # Draw resize handle (top-left corner)
+    handle_rect = pygame.Rect(chat_rect.left, chat_rect.top, 10, 10)
+    pygame.draw.rect(SCREEN, (150, 150, 200), handle_rect)
+
+    # Draw messages with wrapping
     font = FONT
-    start_y = HEIGHT - 280 + 10
-    messages_to_show = client_network.chat_messages[-10:]
-    for i, msg in enumerate(messages_to_show):
-        msg_surf = font.render(msg, True, (0, 0, 0))
-        SCREEN.blit(msg_surf, (WIDTH - 300 + 10, start_y + i * 20))
+    line_height = 20
+    max_width = chat_box_width - 20
+    start_y = chat_rect.top + 10
+
+    wrapped_lines = []
+    for msg in client.chat_messages:
+        wrapped_lines.extend(wrap_text(msg, font, max_width))
+
+    max_visible_lines = chat_box_height // line_height - 1
+    visible_lines = wrapped_lines[chat_scroll_offset:chat_scroll_offset + max_visible_lines]
+    max_chat_scroll_offset = max(0, len(wrapped_lines) - max_visible_lines)
+    for i, line in enumerate(visible_lines):
+        msg_surf = font.render(line, True, (0, 0, 0))
+        SCREEN.blit(msg_surf, (chat_rect.left + 10, start_y + i * line_height))
 
     # Draw input box
-    input_rect = pygame.Rect(WIDTH - 310, HEIGHT - 20, 300, 20)
+    input_rect = pygame.Rect(chat_rect.left, HEIGHT - 20, chat_box_width, 20)
     pygame.draw.rect(SCREEN, (255, 255, 255), input_rect)
     pygame.draw.rect(SCREEN, (100, 100, 150), input_rect, 2)
 
     input_surf = font.render(chat_input_text, True, (0, 0, 0))
-    SCREEN.blit(input_surf, (WIDTH - 300 + 5, HEIGHT - 20))
+    SCREEN.blit(input_surf, (input_rect.left + 5, input_rect.top))
 
 def draw_user_details():
     SCREEN.fill((255, 255, 240))
@@ -645,17 +688,17 @@ def dummy_login():
     log_action(current_user, "Logged in successfully")
     if is_admin(username):
         current_screen = "admin_panel"
-        import client_network
+        import client
 
         # After setting current_user and switching screen
-        client_network.start_client_connection()
+        client.start_client_connection(current_user)
 
     else:
         current_screen = "welcome_screen"
-        import client_network
+        import client
 
         # After setting current_user and switching screen
-        client_network.start_client_connection()
+        client.start_client_connection(current_user)
 
 
 login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), dummy_login)
@@ -689,35 +732,77 @@ while running:
     pygame.event.set_allowed([pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP, pygame.MOUSEBUTTONDOWN, pygame.TEXTINPUT])
     pygame.key.start_text_input()
     SCREEN.fill((255, 255, 255))
+    current_logs = fetch_admin_logs()
+    logs_viewer_height = 25 * 20
+    log_row_height = 25
+    max_visible_logs = logs_viewer_height // log_row_height  # Set dynamically if needed
+    max_scroll_offset = max(0, len(current_logs) - max_visible_logs)
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+            if client_socket:
+                try:
+                    client_socket.shutdown(socket.SHUT_RDWR)
+                    client_socket.close()
+                except Exception:
+                    pass
         if event.type == pygame.MOUSEWHEEL:
-            log_scroll_offset -= event.y
-            max_scroll_offset = max(0, len(fetch_admin_logs()) - max_visible_logs)
-            log_scroll_offset = max(0, min(log_scroll_offset, max_scroll_offset))
-            if log_scroll_offset < 0:
-                log_scroll_offset = 0
-            elif log_scroll_offset > max_scroll_offset:
-                log_scroll_offset = max_scroll_offset
-
+            if chat_visible:
+                chat_scroll_offset -= event.y
+                chat_scroll_offset = max(0, min(chat_scroll_offset, max_chat_scroll_offset))
+            elif current_screen == "logs_viewer":  # Only scroll logs if chat isn't open
+                log_scroll_offset -= event.y
+                log_scroll_offset = max(0, min(log_scroll_offset, max_scroll_offset))
         if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            chat_rect = pygame.Rect(WIDTH - chat_box_width - 10, HEIGHT - chat_box_height - 30, chat_box_width,
+                                    chat_box_height)
+            input_rect = pygame.Rect(chat_rect.left, HEIGHT - 20, chat_box_width, 20)
+            if input_rect.collidepoint(mouse_x, mouse_y):
+                chat_input_active = True
+            else:
+                chat_input_active = False
+            handle_rect = pygame.Rect(chat_rect.left, chat_rect.top, 10, 10)
+
+            if handle_rect.collidepoint(mouse_x, mouse_y):
+                resizing_chat = True
+                resize_start_mouse_pos = (mouse_x, mouse_y)
+                resize_start_box_size = (chat_box_width, chat_box_height)
             if scroll_up_button.rect.collidepoint(event.pos):
                 log_scroll_offset = max(0, log_scroll_offset - 1)
             elif scroll_down_button.rect.collidepoint(event.pos):
                 log_scroll_offset = min(max_scroll_offset, log_scroll_offset + 1)
-        if chat_visible:
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_BACKSPACE:
-                    chat_input_text = chat_input_text[:-1]
-                elif event.key == pygame.K_RETURN:
-                    if chat_input_text.strip() != "":
-                        client_network.send_chat_message(chat_input_text.strip(),current_user)
-                        chat_input_text = ""
-                else:
-                    # Add characters to input (handle only printable characters)
-                    if len(event.unicode) > 0 and event.unicode.isprintable():
-                        chat_input_text += event.unicode
+        elif event.type == pygame.MOUSEBUTTONUP:
+            resizing_chat = False
+        if chat_input_active and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_BACKSPACE:
+                chat_input_text = chat_input_text[:-1]
+            elif event.key == pygame.K_RETURN:
+                if chat_input_text.strip() != "":
+                    client.send_chat_message(chat_input_text.strip(), current_user)
+                    chat_input_text = ""
+            else:
+                if len(event.unicode) > 0 and event.unicode.isprintable():
+                    chat_input_text += event.unicode
+        elif event.type == pygame.MOUSEMOTION and resizing_chat:
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            dx = resize_start_mouse_pos[0] - mouse_x
+            dy = resize_start_mouse_pos[1] - mouse_y
+
+            chat_box_width = max(200, resize_start_box_size[0] + dx)
+            chat_box_height = max(100, resize_start_box_size[1] + dy)
+        #if chat_visible:
+        #    if event.type == pygame.KEYDOWN:
+        #        if event.key == pygame.K_BACKSPACE:
+        #            chat_input_text = chat_input_text[:-1]
+        #        elif event.key == pygame.K_RETURN:
+        #            if chat_input_text.strip() != "":
+        #                client.send_chat_message(chat_input_text.strip(),current_user)
+        #                chat_input_text = ""
+        #        else:
+        #            # Add characters to input (handle only printable characters)
+        #            if len(event.unicode) > 0 and event.unicode.isprintable():
+        #                chat_input_text += event.unicode
         if current_screen == "login":
             login_username.handle_event(event)
             login_password.handle_event(event)
@@ -751,6 +836,8 @@ while running:
             back_button_logs.check_click(event)
             scroll_up_button.check_click(event)
             scroll_down_button.check_click(event)
+            if chat_visible:
+                toggle_chat()
         elif current_screen == "welcome_screen":
             chat_toggle_button.check_click(event)
 
@@ -779,10 +866,10 @@ while running:
     pygame.display.flip()
     clock.tick(60)
 
-if client_network.client_connected and client_network.client_socket:
+if client.client_connected and client.client_socket:
     try:
-        client_network.client_socket.close()
-        client_network.client_connected = False
+        client.client_socket.close()
+        client.client_connected = False
         print("[DEBUG] Disconnected from server.")
     except Exception as e:
         print(f"[ERROR] Error closing socket: {e}")
