@@ -14,21 +14,47 @@ pygame.display.set_caption("Login & Signup System")
 FONT = pygame.font.SysFont("arial", 24)
 current_screen = "login"
 
-def initialize_database():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT,
-            salt TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
 DB_PATH = 'game_data.db'
-initialize_database()
+
+import json
+
+def send_request_to_server(request_dict):
+    try:
+        client.client_socket.send(json.dumps(request_dict).encode())
+        response = client.client_socket.recv(4096).decode()
+        return json.loads(response)
+    except Exception as e:
+        print(f"Error communicating with server: {e}")
+        return None
+
+def fetch_admin_logs():
+    response = send_request_to_server({"action": "fetch_admin_logs"})
+    if response is None:
+        return []
+    return response.get("logs", [])
+
+def user_exists(username):
+    response = send_request_to_server({"action": "user_exists", "username": username})
+    if response is None:
+        return False
+    return response.get("exists", False)
+
+def verify_user(username, password):
+    response = send_request_to_server({
+        "action": "verify_user",
+        "username": username,
+        "password": password
+    })
+    if response is None:
+        return False
+    return response.get("valid", False)
+
+def get_user_role(username):
+    response = send_request_to_server({"action": "get_user_role", "username": username})
+    if response is None:
+        return "user"
+    return response.get("role", "user")
+
 
 def user_exists(username):
     conn = sqlite3.connect(DB_PATH)
@@ -37,20 +63,6 @@ def user_exists(username):
     exists = cursor.fetchone() is not None
     conn.close()
     return exists
-
-def verify_user(username, password):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        stored_password, stored_salt = result
-        salted_input = password + stored_salt
-        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-        return hashed_input == stored_password
-    return False
 
 def clear_all_users():
     conn = sqlite3.connect(DB_PATH)
@@ -72,17 +84,13 @@ def is_strong_password(password):
     return True, ""
 
 def create_user(username, password, role="user"):
-    salt = os.urandom(16).hex()  # Generate a 16-byte random salt
-    salted_password = password + salt
-    hashed_password = hashlib.sha256(salted_password.encode()).hexdigest()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, salt TEXT, role TEXT)")
-    cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)", (username, hashed_password, salt, role))
-
-    conn.commit()
-    conn.close()
+    response = send_request_to_server({
+        "action": "signup",
+        "username": username,
+        "password": password,
+        "role": role
+    })
+    return response and response.get("status") == "success"
 
 def select_user(username):
     global selected_user, current_screen
@@ -194,40 +202,32 @@ def clear_signup_errors():
     signup_confirm.clear_error()
 
 def get_all_users():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, role FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    return users  # List of (username, role)
+    response = send_request_to_server({
+        "action": "fetch_users",
+        "username": current_user  # Must be logged in and an admin
+    })
+    return response.get("users", []) if response and response.get("status") == "success" else []
 
 def reset_user_password(username):
     global password_reset_message
-
     new_pw = new_password_input.text.strip()
     confirm_pw = confirm_password_input.text.strip()
-
     if new_pw == "" or confirm_pw == "":
         password_reset_message = "Password fields cannot be empty."
         return
-
     if new_pw != confirm_pw:
         password_reset_message = "Passwords do not match."
         return
-
-    salt = os.urandom(16).hex()
-    hashed_pw = hashlib.sha256((new_pw + salt).encode()).hexdigest()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET password = ?, salt = ? WHERE username = ?", (hashed_pw, salt, username))
-    conn.commit()
-    conn.close()
-
-    log_action(current_user, f"Reset password for user '{username}'")
-    password_reset_message = f"Password updated for '{username}'"
-
-    # Clear inputs
+    response = send_request_to_server({
+        "action": "update_user",
+        "username": current_user,
+        "target_username": username,
+        "new_password": new_pw
+    })
+    if response and response.get("status") == "success":
+        password_reset_message = f"Password updated for '{username}'"
+    else:
+        password_reset_message = "Failed to update password."
     new_password_input.text = ""
     confirm_password_input.text = ""
 
@@ -275,38 +275,27 @@ def log_action(username, message):
 
 def delete_user(username):
     global selected_user
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM users WHERE username = ?", (username,))
-    conn.commit()
-    conn.close()
-    print(f"User {username} deleted.")
-    selected_user = None
-    switch_screen("manage_users")
-    log_action(current_user, f"Deleted user {selected_user}")
-
-
-def fetch_admin_logs():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, message, timestamp FROM logs ORDER BY id DESC")
-    logs = cursor.fetchall()
-    conn.close()
-    return logs
+    response = send_request_to_server({
+        "action": "delete_user",
+        "username": current_user,  # requester
+        "target_username": username
+    })
+    if response and response.get("status") == "success":
+        print(f"User {username} deleted.")
+        selected_user = None
+        switch_screen("manage_users")
+    else:
+        print("Failed to delete user.")
 
 def toggle_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    if result:
-        current_role = result[0]
-        new_role = "admin" if current_role == "user" else "user"
-        cursor.execute("UPDATE users SET role = ? WHERE username = ?", (new_role, username))
-        conn.commit()
-        print(f"Changed role of {username} to {new_role}")
-        log_action(current_user, f"Toggled role for {selected_user} to {new_role}")
-    conn.close()
+    response = send_request_to_server({
+        "action": "update_user",
+        "username": current_user,
+        "target_username": username,
+        "new_role": "admin"  # you can improve this by toggling based on current role
+    })
+    if response and response.get("status") == "success":
+        print(f"Role updated for {username}")
 
 def draw_chat():
     global chat_box_width, chat_box_height, max_chat_scroll_offset
@@ -573,12 +562,11 @@ def signup_submit_action():
         print("Sign Up Failed: Errors found")
 
 def is_admin(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None and result[0] == 'admin'
+    response = send_request_to_server({
+        "action": "get_user_role",
+        "username": username
+    })
+    return response.get("role") == "admin"
 
 def draw_logged_in_user():
     if current_user:
@@ -586,15 +574,6 @@ def draw_logged_in_user():
         user_text = FONT.render(f"Logged in as: {current_user} ({role})", True, (0, 0, 0))
         SCREEN.blit(user_text, (10, HEIGHT - 30))  # Bottom-left corner
         chat_toggle_button.draw(SCREEN)
-
-def get_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else "user"  # default to "user" if not found
-
 
 def draw_admin_panel():
     SCREEN.fill((255, 230, 230))  # light red background
@@ -645,8 +624,6 @@ def draw_signup_screen():
     signup_password.draw(SCREEN)
     signup_confirm.draw(SCREEN)
     signup_submit.draw(SCREEN)
-
-    signup_submit.draw(SCREEN)
     back_button.draw(SCREEN)
 logs = fetch_admin_logs()
 
@@ -688,14 +665,12 @@ def dummy_login():
     log_action(current_user, "Logged in successfully")
     if is_admin(username):
         current_screen = "admin_panel"
-        import client
 
         # After setting current_user and switching screen
         client.start_client_connection(current_user)
 
     else:
         current_screen = "welcome_screen"
-        import client
 
         # After setting current_user and switching screen
         client.start_client_connection(current_user)
@@ -791,18 +766,6 @@ while running:
 
             chat_box_width = max(200, resize_start_box_size[0] + dx)
             chat_box_height = max(100, resize_start_box_size[1] + dy)
-        #if chat_visible:
-        #    if event.type == pygame.KEYDOWN:
-        #        if event.key == pygame.K_BACKSPACE:
-        #            chat_input_text = chat_input_text[:-1]
-        #        elif event.key == pygame.K_RETURN:
-        #            if chat_input_text.strip() != "":
-        #                client.send_chat_message(chat_input_text.strip(),current_user)
-        #                chat_input_text = ""
-        #        else:
-        #            # Add characters to input (handle only printable characters)
-        #            if len(event.unicode) > 0 and event.unicode.isprintable():
-        #                chat_input_text += event.unicode
         if current_screen == "login":
             login_username.handle_event(event)
             login_password.handle_event(event)

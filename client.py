@@ -2,6 +2,8 @@ import json
 import socket
 import threading
 
+import login_stuff
+
 client_socket = None
 receive_thread = None
 chat_messages = []
@@ -88,7 +90,7 @@ def send_chat_message(raw_text, username):
         })
         print(f"Sending to server: {message}")  # Debug print
         try:
-            client_socket.sendall(message.encode())
+            client_socket.sendall((message + "\n").encode())
         except Exception as e:
             print(f"Failed to send message: {e}")
 
@@ -99,7 +101,7 @@ def receive_messages(sock, username):
 
     while True:
         try:
-            data = sock.recv(1024).decode('utf-8')
+            data = sock.recv(4096).decode('utf-8')
             if not data:
                 break
 
@@ -138,26 +140,5 @@ def receive_messages(sock, username):
             print(f"[ERROR receiving message]: {e}")
             break
 
-
-def main():
-    HOST = 'tramway.proxy.rlwy.net'
-    PORT = 23620
-
-    username = input("Enter your username: ")
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((HOST, PORT))
-
-    # Start receiving thread, pass the socket and username
-    threading.Thread(target=receive_messages, args=(s, username), daemon=True).start()
-
-    while True:
-        msg = input()
-        if msg.strip() == "":
-            continue
-        # Include username in the message sent to server
-        message = json.dumps({"action": "chat", "username": username, "content": msg})
-        s.sendall(message.encode())
-
 if __name__ == "__main__":
-    main()
+    start_client_connection(login_stuff.login_username)
