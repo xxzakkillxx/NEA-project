@@ -4,7 +4,6 @@ import json
 import sqlite3
 import hashlib
 import os
-import datetime
 
 HOST = '0.0.0.0'
 PORT = int(os.environ.get('PORT', 50007))  # <-- dynamical port
@@ -12,21 +11,13 @@ DB_PATH = 'game_data.db'
 
 clients = []
 
-def log_action_to_database(username, message):
+def user_exists(username):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS admin_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            message TEXT,
-            timestamp TEXT
-        )
-    """)
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("INSERT INTO admin_logs (username, message, timestamp) VALUES (?, ?, ?)", (username, message, timestamp))
-    conn.commit()
+    cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+    exists = cursor.fetchone() is not None
     conn.close()
+    return exists
 
 def verify_user(username, password):
     conn = sqlite3.connect(DB_PATH)
@@ -108,15 +99,12 @@ def process_request(message, sender_conn=None):
         else:
             print(f"[LOGIN_FAILED] {username}")
             return {"status": "error", "message": "Invalid credentials"}
-    elif action == "fetch_admin_logs":
-        logs = fetch_logs_from_database()
-        return {"status": "success", "logs": logs}
 
     elif action == "signup":
         username = message.get("username", "")
         password = message.get("password", "")
         print(f"[SIGNUP_ATTEMPT] {username}")
-        if check_user_exists(username):
+        if user_exists(username):
             return {"status": "error", "message": "Username already exists"}
         else:
             create_user(username, password)
@@ -143,8 +131,6 @@ def process_request(message, sender_conn=None):
         except Exception as e:
             print(f"[ERROR] Failed to send to sender: {e}")
         return {"status": "success", "message": "Message sent"}
-
-
 
     # --------- New admin management actions ---------
 
@@ -185,83 +171,47 @@ def process_request(message, sender_conn=None):
         delete_user(target_user)
         return {"status": "success", "message": f"User {target_user} deleted"}
 
-    elif action == "get_user_role":
-        username = message.get("username")
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-        conn.close()
-        return {"role": result[0] if result else "user"}
-
-    elif action == "log_action":
-        username = message.get("username")
-        msg = message.get("message", "")
-        log_action_to_database(username, msg)
-        return {"status": "success"}
-
-
     # ------------------------------------------------------
 
     else:
         print(f"[WARN] Unknown action: {action}")
         return {"status": "error", "message": "Unknown action"}
 
-def handle_client_request(client_socket):
+def handle_client(conn, addr):
+    print(f"New connection from {addr}")
     while True:
         try:
-            data = client_socket.recv(4096)
+            data = conn.recv(1024)
             if not data:
                 break
-            request = json.loads(data.decode())
+            try:
+                message = json.loads(data.decode())
+            except json.JSONDecodeError:
+                print(f"[WARN] Invalid JSON from {addr}: {data!r}")
+                continue
 
-            response = process_request(request, client_socket)
-            client_socket.sendall((json.dumps(response) + "\n").encode())
+            response = process_request(message, sender_conn=conn)
+            conn.sendall(json.dumps(response).encode())
 
         except Exception as e:
-            print(f"[ERROR] Failed to handle request: {e}")
+            print(f"[ERROR] with {addr}: {e}")
             break
-def fetch_logs_from_database():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM admin_logs ORDER BY timestamp DESC")
-    logs = cursor.fetchall()
-    conn.close()
-    return logs
 
-def check_user_exists(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
+    print(f"Connection closed from {addr}")
     conn.close()
-    return result is not None
-
-def get_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    row = cursor.fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return row[0]
+    if conn in clients:
+        clients.remove(conn)
 
 def main():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((HOST, PORT))
-    server.listen()
-
-    print(f"[STARTED] Server listening on {HOST}:{PORT}")
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((HOST, PORT))
+    s.listen()
+    print(f"Server listening on {HOST}:{PORT}")
 
     while True:
-        client_socket, addr = server.accept()
-        print(f"[CONNECTED] Client connected from {addr}")
-        clients.append(client_socket)
-
-        thread = threading.Thread(target=handle_client_request, args=(client_socket,))
-        thread.start()
-
+        conn, addr = s.accept()
+        clients.append(conn)
+        threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
 if __name__ == "__main__":
     main()
