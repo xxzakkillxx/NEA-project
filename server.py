@@ -167,15 +167,15 @@ def process_request(message, sender_conn=None):
     elif action == "get_logs":
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
-            return {"status": "error", "action": "Admin privileges required"}
+            return {"status": "error", "message": "Admin privileges required"}
         # Fetch logs from the database
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT username, message, timestamp FROM logs ORDER BY timestamp DESC LIMIT 10")
+        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
         logs = cursor.fetchall()
         conn.close()
         log_entries = [
-            {"username": row[0], "message": row[1], "timestamp": row[2]} for row in logs
+            {"username": row[0], "action": row[1], "timestamp": row[2]} for row in logs
         ]
         return {
             "action": "admin_logs",
