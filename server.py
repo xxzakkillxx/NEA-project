@@ -232,27 +232,21 @@ def handle_client(conn, addr):
     buffer = ""
     while True:
         try:
-            data = conn.recv(1024)
+            data = conn.recv(4096)
             if not data:
                 break
-            buffer += data.decode()
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                if not line.strip():
-                    continue
-                try:
-                    message = json.loads(line)
-                except json.JSONDecodeError:
-                    print(f"[WARN] Invalid JSON from {addr}: {line}")
-                    continue
-                print(f"[SERVER] Processing message: {message}")
-                response = process_request(message, sender_conn=conn)
-                if response:
-                    response_str = json.dumps(response) + "\n"
-                    conn.sendall(response_str.encode())
-                    print(f"[SERVER] Sent response: {response_str.strip()}")
+            message = json.loads(data.decode())
+            print(f"[DECODED MESSAGE]: {message}")
+
+            # Process the request
+            response = process_request(message)
+
+            # Always send response back if not None
+            if response is not None:
+                conn.sendall(json.dumps(response).encode())
+
         except Exception as e:
-            print(f"[ERROR] with {addr}: {e}")
+            print(f"[ERROR] {e}")
             break
     print(f"[SERVER] Connection closed from {addr}")
     conn.close()
