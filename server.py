@@ -112,6 +112,7 @@ def delete_user(target_username):
 def process_request(message, sender_conn=None):
     print(f"[DEBUG] Incoming message: {message}")
     action = message.get("action")
+    print(f"[PROCESS_REQUEST] Action: {action}, Message: {message}")
 
     if action == "login":
         username = message.get("username", "")
