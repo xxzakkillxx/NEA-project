@@ -41,14 +41,6 @@ def send_request_and_wait(request_dict, expected_action=None, timeout=5):
 
         return last_response
 
-
-
-
-
-
-
-
-
 def start_client_connection(username, password, logs_handler=None):
     import time
     global client_socket, receive_thread, client_connected, running, chat_messages
@@ -88,7 +80,7 @@ def start_client_connection(username, password, logs_handler=None):
                         "password": password
                         # Add "password": password if needed
                     })
-                    client_socket.sendall(login_payload.encode())
+                    client_socket.sendall((login_payload + "\n").encode('utf-8'))
                     first_connection = False  # ✅ Only send login once
                 except Exception as login_error:
                     print(f"[ERROR] Failed to send login info: {login_error}")
