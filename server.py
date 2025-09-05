@@ -156,14 +156,12 @@ def process_request(message, sender_conn=None):
     elif action == "get_user_role":
         print(f"[PROCESS_REQUEST] Handling get_user_role for {message.get('username')}")
         username = message.get("username", "")
-        print(f"[SERVER] get_user_role requested for username: {username}")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         conn.close()
         role = result[0] if result else "user"
-        print(f"[SERVER] Found role: {role}")
         response = {
             "action": "get_user_role",
             "status": "success",
@@ -244,6 +242,7 @@ def handle_client(conn, addr):
             # Always send response back if not None
             if response is not None:
                 conn.sendall(json.dumps(response).encode())
+                print(f"[SERVER] Sent response: {response}")
 
         except Exception as e:
             print(f"[ERROR] {e}")
