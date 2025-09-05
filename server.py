@@ -41,20 +41,6 @@ def user_exists(username):
     conn.close()
     return exists
 
-#def verify_user(username, password):
-#    conn = sqlite3.connect(DB_PATH)
-#    cursor = conn.cursor()
-#    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-#    result = cursor.fetchone()
-#    conn.close()
-#
-#    if result:
-#        stored_password, stored_salt = result
-#        salted_input = password + stored_salt
-#        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-#        return hashed_input == stored_password
-#    return False
-
 def create_user(username, password, role="user"):
     salt = os.urandom(16).hex()  # Generate a 16-byte random salt
     salted_password = password + salt
@@ -113,6 +99,7 @@ def process_request(message, sender_conn=None):
     print(f"[DEBUG] Incoming message: {message}")
     action = message.get("action")
     print(f"[PROCESS_REQUEST] Action: {action}, Message: {message}")
+    print(f"[PROCESS_REQUEST] Received message: {message}")
 
     if action == "login":
         username = message.get("username", "")
@@ -167,16 +154,19 @@ def process_request(message, sender_conn=None):
         return {"status": "success", "users": users}
 
     elif action == "get_user_role":
+        print(f"[PROCESS_REQUEST] Handling get_user_role for {message.get('username')}")
         username = message.get("username", "")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         conn.close()
+        role = result[0] if result else "user"
+        print(f"[PROCESS_REQUEST] Found role: {role} for user: {username}")
         return {
-            "action": "get_user_role",  # Important for matching in response handler
+            "action": "get_user_role",
             "status": "success",
-            "role": result[0] if result else "user"
+            "role": role
         }
 
     elif action == "get_logs":
