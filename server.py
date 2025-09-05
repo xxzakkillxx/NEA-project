@@ -76,6 +76,7 @@ def check_is_admin(username):
     cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
     result = cursor.fetchone()
     conn.close()
+    print(f"[DEBUG] check_is_admin: user={username}, role={result}")
     return result is not None and result[0] == "admin"
 
 def fetch_all_users():
@@ -170,7 +171,7 @@ def process_request(message, sender_conn=None):
         # Fetch logs from the database
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
+        cursor.execute("SELECT username, action, timestamp FROM logs ORDER BY timestamp DESC LIMIT 50")
         logs = cursor.fetchall()
         conn.close()
         log_entries = [

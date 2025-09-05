@@ -20,7 +20,7 @@ logs_cache = []
 def request_admin_logs():
     import network_client
     if network_client.client_connected and network_client.client_socket:
-        network_client.send_message({"action": "get_logs"})
+        network_client.send_message({"action": "get_logs", "username": current_user})
     else:
         print("[ERROR] Cannot request logs — disconnected.")
 
