@@ -175,7 +175,7 @@ def process_request(message, sender_conn=None):
         logs = cursor.fetchall()
         conn.close()
         log_entries = [
-            {"username": row[0], "action": row[1], "timestamp": row[2]} for row in logs
+            {"username": row[1], "action": row[2], "timestamp": row[3]} for row in logs
         ]
         return {
             "action": "admin_logs",
