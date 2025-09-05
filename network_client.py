@@ -136,8 +136,9 @@ def receive_messages(client_socket, username):
                     # else:
                     #     print(f"[OTHER MESSAGE]: {message}")
 
-                except json.JSONDecodeError:
-                    # Wait for more data if current buffer isn't a full JSON
+                except json.JSONDecodeError as e:
+                    print(f"[PARTIAL BUFFER]: {buffer[:100]}")  # Show up to 100 chars of the buffer
+                    print(f"[JSON ERROR]: {e}")
                     break
 
         except Exception as e:

@@ -164,24 +164,23 @@ def process_request(message, sender_conn=None):
         return {"status": "success", "users": users}
 
     elif action == "get_logs":
+        requesting_user = message.get("username", "")
+        if not check_is_admin(requesting_user):
+            return {"status": "error", "message": "Admin privileges required"}
         # Fetch logs from the database
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")  # Or whatever table you use
+        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
         logs = cursor.fetchall()
         conn.close()
-
         log_entries = [
             {"username": row[0], "action": row[1], "timestamp": row[2]} for row in logs
         ]
-
-        response = {
+        return {
             "action": "admin_logs",
             "status": "success",
             "logs": log_entries
         }
-
-        sender_conn.sendall(json.dumps(response).encode())
 
     elif action == "update_user":
         requesting_user = message.get("username", "")
@@ -233,7 +232,7 @@ def handle_client(conn, addr):
                 continue
 
             response = process_request(message, sender_conn=conn)
-            conn.sendall(json.dumps(response).encode())
+            conn.sendall((json.dumps(response) + "\n").encode())
 
         except Exception as e:
             print(f"[ERROR] with {addr}: {e}")
