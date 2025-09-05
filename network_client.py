@@ -10,45 +10,6 @@ RECONNECT_DELAY = 3  # Initial delay (in seconds)
 MAX_RECONNECT_DELAY = 30
 running = True
 
-
-
-
-
-response_lock = threading.Lock()
-response_condition = threading.Condition(response_lock)
-last_response = None  # Shared variable to hold server response
-
-def send_request_and_wait(request_dict, expected_action=None, timeout=5):
-    """
-    Sends a request to the server and waits for a response with a matching action (if specified).
-    Returns the response dictionary or None on timeout.
-    """
-    global last_response
-
-    with response_condition:
-        last_response = None  # Reset before sending
-        send_message(request_dict)
-
-        # Wait for response or timeout
-        if not response_condition.wait_for(
-            lambda: last_response is not None and (
-                expected_action is None or last_response.get("action") == expected_action
-            ),
-            timeout=timeout
-        ):
-            print("[ERROR] Timeout waiting for response from server")
-            return None
-
-        return last_response
-
-
-
-
-
-
-
-
-
 def start_client_connection(username, password, logs_handler=None):
     import time
     global client_socket, receive_thread, client_connected, running, chat_messages
@@ -175,11 +136,6 @@ def receive_messages(client_socket, username, logs_handler=None):
                                 logs_handler(logs)
                             else:
                                 print("[WARNING] No logs_handler provided to handle logs.")
-                        # Handle generic responses for send_request_and_wait
-                        global last_response
-                        with response_condition:
-                            last_response = message
-                            response_condition.notify()
                         # You can add more elif blocks for other actions here
                 except json.JSONDecodeError as e:
                     print(f"[JSON ERROR]: {e}")
