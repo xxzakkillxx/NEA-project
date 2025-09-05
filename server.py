@@ -163,12 +163,14 @@ def process_request(message, sender_conn=None):
         result = cursor.fetchone()
         conn.close()
         role = result[0] if result else "user"
-        print(f"[SERVER] Role for user '{username}': {role}")
-        return {
+        print(f"[SERVER] Found role: {role}")
+        response = {
             "action": "get_user_role",
             "status": "success",
             "role": role
         }
+        print(f"[SERVER] Returning response: {response}")
+        return response
 
     elif action == "get_logs":
         requesting_user = message.get("username", "")
@@ -226,41 +228,37 @@ def process_request(message, sender_conn=None):
         return {"status": "error", "message": "Unknown action"}
 
 def handle_client(conn, addr):
-    print(f"New connection from {addr}")
+    print(f"[SERVER] New connection from {addr}")
     buffer = ""
     while True:
         try:
-            data = conn.recv(1024).decode()
+            data = conn.recv(1024)
             if not data:
                 break
-
-            buffer += data
-            while '\n' in buffer:
-                line, buffer = buffer.split('\n', 1)
+            buffer += data.decode()
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
                 if not line.strip():
                     continue
-
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError:
                     print(f"[WARN] Invalid JSON from {addr}: {line}")
                     continue
-
-                print(f"[DEBUG] Incoming message: {message}")
+                print(f"[SERVER] Processing message: {message}")
                 response = process_request(message, sender_conn=conn)
-
                 if response:
-                    print(f"[DEBUG SEND]: {json.dumps(response)}")
-                    conn.sendall((json.dumps(response) + '\n').encode())
-
+                    response_str = json.dumps(response) + "\n"
+                    conn.sendall(response_str.encode())
+                    print(f"[SERVER] Sent response: {response_str.strip()}")
         except Exception as e:
             print(f"[ERROR] with {addr}: {e}")
             break
-
-    print(f"Connection closed from {addr}")
+    print(f"[SERVER] Connection closed from {addr}")
     conn.close()
     if conn in clients:
         clients.remove(conn)
+
 
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
