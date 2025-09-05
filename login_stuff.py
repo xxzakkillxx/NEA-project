@@ -508,9 +508,7 @@ def draw_logs_viewer():
         row_rect = pygame.Rect(45, y, sum(col_widths) + 10, row_height)
         pygame.draw.rect(SCREEN, row_bg_color, row_rect)
 
-        username = log.get("username", "Unknown")
-        message = log.get("action", "No action")
-        timestamp = log.get("timestamp", "N/A")
+        username, message, timestamp = log
         if ' ' in timestamp:
             date_part, time_part = timestamp.split(' ')
         else:
@@ -616,14 +614,13 @@ def draw_logged_in_user():
         chat_toggle_button.draw(SCREEN)
 
 def get_user_role(username):
-    response = network_client.send_request_and_wait({
-        "action": "get_user_role",
-        "username": username
-    }, expected_action="get_user_role")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else "user"  # default to "user" if not found
 
-    if response and "role" in response:
-        return response["role"]
-    return "user"  # default fallback
 
 def draw_admin_panel():
     SCREEN.fill((255, 230, 230))  # light red background

@@ -41,6 +41,20 @@ def user_exists(username):
     conn.close()
     return exists
 
+#def verify_user(username, password):
+#    conn = sqlite3.connect(DB_PATH)
+#    cursor = conn.cursor()
+#    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
+#    result = cursor.fetchone()
+#    conn.close()
+#
+#    if result:
+#        stored_password, stored_salt = result
+#        salted_input = password + stored_salt
+#        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
+#        return hashed_input == stored_password
+#    return False
+
 def create_user(username, password, role="user"):
     salt = os.urandom(16).hex()  # Generate a 16-byte random salt
     salted_password = password + salt
@@ -96,10 +110,7 @@ def delete_user(target_username):
 # -----------------------------------------------------------------------
 
 def process_request(message, sender_conn=None):
-    print(f"[SERVER] Received message: {message}")
     action = message.get("action")
-    print(f"[PROCESS_REQUEST] Action: {action}, Message: {message}")
-    print(f"[PROCESS_REQUEST] Received message: {message}")
 
     if action == "login":
         username = message.get("username", "")
@@ -152,23 +163,6 @@ def process_request(message, sender_conn=None):
             return {"status": "error", "message": "Admin privileges required"}
         users = fetch_all_users()
         return {"status": "success", "users": users}
-
-    elif action == "get_user_role":
-        print(f"[PROCESS_REQUEST] Handling get_user_role for {message.get('username')}")
-        username = message.get("username", "")
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-        conn.close()
-        role = result[0] if result else "user"
-        response = {
-            "action": "get_user_role",
-            "status": "success",
-            "role": role
-        }
-        print(f"[SERVER] Returning response: {response}")
-        return response
 
     elif action == "get_logs":
         requesting_user = message.get("username", "")
@@ -226,32 +220,30 @@ def process_request(message, sender_conn=None):
         return {"status": "error", "message": "Unknown action"}
 
 def handle_client(conn, addr):
-    print(f"[SERVER] New connection from {addr}")
-    buffer = ""
+    print(f"New connection from {addr}")
     while True:
         try:
-            data = conn.recv(4096)
+            data = conn.recv(1024)
             if not data:
                 break
-            message = json.loads(data.decode())
-            print(f"[DECODED MESSAGE]: {message}")
+            try:
+                message = json.loads(data.decode())
+            except json.JSONDecodeError:
+                print(f"[WARN] Invalid JSON from {addr}: {data!r}")
+                continue
 
-            # Process the request
-            response = process_request(message)
-
-            # Always send response back if not None
-            if response is not None:
-                conn.sendall(json.dumps(response).encode())
-                print(f"[SERVER] Sent response: {response}")
+            response = process_request(message, sender_conn=conn)
+            print(f"[DEBUG SEND]: {json.dumps(response)[:50]}... (truncated)")
+            conn.sendall((json.dumps(response) + "\n").encode())
 
         except Exception as e:
-            print(f"[ERROR] {e}")
+            print(f"[ERROR] with {addr}: {e}")
             break
-    print(f"[SERVER] Connection closed from {addr}")
+
+    print(f"Connection closed from {addr}")
     conn.close()
     if conn in clients:
         clients.remove(conn)
-
 
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

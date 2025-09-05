@@ -1,8 +1,6 @@
 import json
 import socket
 import threading
-import time
-import select
 
 client_socket = None
 receive_thread = None
@@ -11,29 +9,6 @@ client_connected = False
 RECONNECT_DELAY = 3  # Initial delay (in seconds)
 MAX_RECONNECT_DELAY = 30
 running = True
-
-response_lock = threading.Lock()
-response_condition = threading.Condition(response_lock)
-last_response = None  # Shared variable to hold server response
-
-def send_request_and_wait(request_dict, expected_action=None, timeout=5):
-    try:
-        client_socket.sendall(json.dumps(request_dict).encode())
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            ready = select.select([client_socket], [], [], 0.1)
-            if ready[0]:
-                data = client_socket.recv(4096)
-                if data:
-                    response = json.loads(data.decode())
-                    if expected_action is None or response.get("action") == expected_action:
-                        return response
-        print("[ERROR] Timeout waiting for response from server")
-        return None
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return None
-
 
 def start_client_connection(username, password, logs_handler=None):
     import time
@@ -74,7 +49,7 @@ def start_client_connection(username, password, logs_handler=None):
                         "password": password
                         # Add "password": password if needed
                     })
-                    client_socket.sendall((login_payload + "\n").encode('utf-8'))
+                    client_socket.sendall(login_payload.encode())
                     first_connection = False  # ✅ Only send login once
                 except Exception as login_error:
                     print(f"[ERROR] Failed to send login info: {login_error}")
@@ -161,11 +136,6 @@ def receive_messages(client_socket, username, logs_handler=None):
                                 logs_handler(logs)
                             else:
                                 print("[WARNING] No logs_handler provided to handle logs.")
-                        # Handle generic responses for send_request_and_wait
-                        global last_response
-                        with response_condition:
-                            last_response = message
-                            response_condition.notify()
                         # You can add more elif blocks for other actions here
                 except json.JSONDecodeError as e:
                     print(f"[JSON ERROR]: {e}")
