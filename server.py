@@ -110,6 +110,7 @@ def delete_user(target_username):
 # -----------------------------------------------------------------------
 
 def process_request(message, sender_conn=None):
+    print(f"[DEBUG] Incoming message: {message}")
     action = message.get("action")
 
     if action == "login":
@@ -164,6 +165,19 @@ def process_request(message, sender_conn=None):
         users = fetch_all_users()
         return {"status": "success", "users": users}
 
+    elif action == "get_user_role":
+        username = message.get("username", "")
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+        conn.close()
+        return {
+            "action": "get_user_role",  # Important for matching in response handler
+            "status": "success",
+            "role": result[0] if result else "user"
+        }
+
     elif action == "get_logs":
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
@@ -175,7 +189,7 @@ def process_request(message, sender_conn=None):
         logs = cursor.fetchall()
         conn.close()
         log_entries = [
-            {"username": row[1], "action": row[2], "timestamp": row[3]} for row in logs
+            {"username": row[0], "action": row[1], "timestamp": row[2]} for row in logs
         ]
         return {
             "action": "admin_logs",
@@ -221,20 +235,31 @@ def process_request(message, sender_conn=None):
 
 def handle_client(conn, addr):
     print(f"New connection from {addr}")
+    buffer = ""
     while True:
         try:
-            data = conn.recv(1024)
+            data = conn.recv(1024).decode()
             if not data:
                 break
-            try:
-                message = json.loads(data.decode())
-            except json.JSONDecodeError:
-                print(f"[WARN] Invalid JSON from {addr}: {data!r}")
-                continue
 
-            response = process_request(message, sender_conn=conn)
-            print(f"[DEBUG SEND]: {json.dumps(response)[:50]}... (truncated)")
-            conn.sendall((json.dumps(response) + "\n").encode())
+            buffer += data
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                if not line.strip():
+                    continue
+
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    print(f"[WARN] Invalid JSON from {addr}: {line}")
+                    continue
+
+                print(f"[DEBUG] Incoming message: {message}")
+                response = process_request(message, sender_conn=conn)
+
+                if response:
+                    print(f"[DEBUG SEND]: {json.dumps(response)}")
+                    conn.sendall((json.dumps(response) + '\n').encode())
 
         except Exception as e:
             print(f"[ERROR] with {addr}: {e}")

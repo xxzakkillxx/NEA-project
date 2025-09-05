@@ -30,13 +30,6 @@ def handle_server_response(response):
     if response.get("action") == "admin_logs":
         logs_cache = response.get("logs", [])
 
-
-
-
-
-
-
-
 def initialize_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -184,6 +177,7 @@ client_socket = None
 receive_thread = None
 client_connected = False
 chat_input_active = False
+logs_requested = False
 
 
 chat_scroll_offset = 0
@@ -294,6 +288,11 @@ def log_action(username, message):
 
     conn.commit()
     conn.close()
+
+def update_logs_cache(logs):
+    global logs_cache
+    logs_cache = logs
+    print(f"[GUI] logs_cache updated with {len(logs)} entries")
 
 
 def delete_user(username):
@@ -509,8 +508,14 @@ def draw_logs_viewer():
         row_rect = pygame.Rect(45, y, sum(col_widths) + 10, row_height)
         pygame.draw.rect(SCREEN, row_bg_color, row_rect)
 
-        _, username, message, timestamp = log
-        date_part, time_part = timestamp.split(' ')
+        username = log.get("username", "Unknown")
+        message = log.get("action", "No action")
+        timestamp = log.get("timestamp", "N/A")
+        if ' ' in timestamp:
+            date_part, time_part = timestamp.split(' ')
+        else:
+            date_part = timestamp
+            time_part = "N/A"
 
         # Render texts
         date_text = FONT.render(date_part, True, (0, 0, 0))
@@ -611,13 +616,14 @@ def draw_logged_in_user():
         chat_toggle_button.draw(SCREEN)
 
 def get_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else "user"  # default to "user" if not found
+    response = network_client.send_request_and_wait({
+        "action": "get_user_role",
+        "username": username
+    }, expected_action="get_user_role")
 
+    if response and "role" in response:
+        return response["role"]
+    return "user"  # default fallback
 
 def draw_admin_panel():
     SCREEN.fill((255, 230, 230))  # light red background
@@ -724,14 +730,14 @@ def dummy_login():
         # After setting current_user and switching screen
         print(current_user)
         print(password)
-        network_client.start_client_connection(current_user,password)
+        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
 
     else:
         current_screen = "welcome_screen"
         # After setting current_user and switching screen
         print(current_user)
         print(password)
-        network_client.start_client_connection(current_user,password)
+        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
 
 
 login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), dummy_login)
@@ -882,9 +888,13 @@ while running:
         draw_user_details()
         if chat_visible:
             draw_chat()
-    elif current_screen == "logs_viewer":
+    elif current_screen == "logs_viewer" and not logs_requested:
         request_admin_logs()
+        logs_requested = True
+    elif current_screen == "logs_viewer":
         draw_logs_viewer()
+    if current_screen != "logs_viewer":
+        logs_requested = False
     pygame.display.flip()
     clock.tick(60)
 
