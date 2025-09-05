@@ -4,7 +4,7 @@ import hashlib
 import os
 import re
 from datetime import datetime
-import client
+import network_client
 import socket
 
 pygame.init()
@@ -13,6 +13,29 @@ SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Login & Signup System")
 FONT = pygame.font.SysFont("arial", 24)
 current_screen = "login"
+
+
+logs_cache = []
+
+def request_admin_logs():
+    import network_client
+    if network_client.client_connected and network_client.client_socket:
+        network_client.send_message({"action": "get_logs"})
+    else:
+        print("[ERROR] Cannot request logs — disconnected.")
+
+def handle_server_response(response):
+    # Parse server response and update logs cache
+    global logs_cache
+    if response.get("action") == "admin_logs":
+        logs_cache = response.get("logs", [])
+
+
+
+
+
+
+
 
 def initialize_database():
     conn = sqlite3.connect(DB_PATH)
@@ -286,13 +309,13 @@ def delete_user(username):
     log_action(current_user, f"Deleted user {selected_user}")
 
 
-def fetch_admin_logs():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, message, timestamp FROM logs ORDER BY id DESC")
-    logs = cursor.fetchall()
-    conn.close()
-    return logs
+#def fetch_admin_logs():
+#    conn = sqlite3.connect(DB_PATH)
+#    cursor = conn.cursor()
+#    cursor.execute("SELECT id, username, message, timestamp FROM logs ORDER BY id DESC")
+#    logs = cursor.fetchall()
+#    conn.close()
+#    return logs
 
 def toggle_user_role(username):
     conn = sqlite3.connect(DB_PATH)
@@ -326,7 +349,7 @@ def draw_chat():
     start_y = chat_rect.top + 10
 
     wrapped_lines = []
-    for msg in client.chat_messages:
+    for msg in network_client.chat_messages:
         wrapped_lines.extend(wrap_text(msg, font, max_width))
 
     max_visible_lines = chat_box_height // line_height - 1
@@ -460,7 +483,7 @@ def draw_logs_viewer():
 
     # Fetch logs
     try:
-        logs = fetch_admin_logs()
+        logs = logs_cache
     except Exception as e:
         error_text = FONT.render(f"Error fetching logs: {e}", True, (255, 0, 0))
         SCREEN.blit(error_text, (50, 100))
@@ -648,12 +671,22 @@ def draw_signup_screen():
 
     signup_submit.draw(SCREEN)
     back_button.draw(SCREEN)
-logs = fetch_admin_logs()
+logs = logs_cache
 
 def switch_screen(name):
     global current_screen
     current_screen = name
     clear_all_inputs_and_messages()
+
+    if name == "logs_viewer":
+        try:
+            import network_client
+            if network_client.client_connected:
+                request_admin_logs()
+            else:
+                print("[INFO] Delaying log request until client connects...")
+        except Exception as e:
+            print(f"[ERROR] Failed to request logs: {e}")
 
 def dummy_login():
     login_username.clear_error()
@@ -688,17 +721,17 @@ def dummy_login():
     log_action(current_user, "Logged in successfully")
     if is_admin(username):
         current_screen = "admin_panel"
-        import client
-
         # After setting current_user and switching screen
-        client.start_client_connection(current_user)
+        print(current_user)
+        print(password)
+        network_client.start_client_connection(current_user,password)
 
     else:
         current_screen = "welcome_screen"
-        import client
-
         # After setting current_user and switching screen
-        client.start_client_connection(current_user)
+        print(current_user)
+        print(password)
+        network_client.start_client_connection(current_user,password)
 
 
 login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), dummy_login)
@@ -732,7 +765,7 @@ while running:
     pygame.event.set_allowed([pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP, pygame.MOUSEBUTTONDOWN, pygame.TEXTINPUT])
     pygame.key.start_text_input()
     SCREEN.fill((255, 255, 255))
-    current_logs = fetch_admin_logs()
+    current_logs = logs_cache
     logs_viewer_height = 25 * 20
     log_row_height = 25
     max_visible_logs = logs_viewer_height // log_row_height  # Set dynamically if needed
@@ -779,7 +812,7 @@ while running:
                 chat_input_text = chat_input_text[:-1]
             elif event.key == pygame.K_RETURN:
                 if chat_input_text.strip() != "":
-                    client.send_chat_message(chat_input_text.strip(), current_user)
+                    network_client.send_chat_message(chat_input_text.strip(), current_user)
                     chat_input_text = ""
             else:
                 if len(event.unicode) > 0 and event.unicode.isprintable():
@@ -791,18 +824,6 @@ while running:
 
             chat_box_width = max(200, resize_start_box_size[0] + dx)
             chat_box_height = max(100, resize_start_box_size[1] + dy)
-        #if chat_visible:
-        #    if event.type == pygame.KEYDOWN:
-        #        if event.key == pygame.K_BACKSPACE:
-        #            chat_input_text = chat_input_text[:-1]
-        #        elif event.key == pygame.K_RETURN:
-        #            if chat_input_text.strip() != "":
-        #                client.send_chat_message(chat_input_text.strip(),current_user)
-        #                chat_input_text = ""
-        #        else:
-        #            # Add characters to input (handle only printable characters)
-        #            if len(event.unicode) > 0 and event.unicode.isprintable():
-        #                chat_input_text += event.unicode
         if current_screen == "login":
             login_username.handle_event(event)
             login_password.handle_event(event)
@@ -862,14 +883,15 @@ while running:
         if chat_visible:
             draw_chat()
     elif current_screen == "logs_viewer":
+        request_admin_logs()
         draw_logs_viewer()
     pygame.display.flip()
     clock.tick(60)
 
-if client.client_connected and client.client_socket:
+if network_client.client_connected and network_client.client_socket:
     try:
-        client.client_socket.close()
-        client.client_connected = False
+        network_client.client_socket.close()
+        network_client.client_connected = False
         print("[DEBUG] Disconnected from server.")
     except Exception as e:
         print(f"[ERROR] Error closing socket: {e}")

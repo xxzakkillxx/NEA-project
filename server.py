@@ -11,6 +11,28 @@ DB_PATH = 'game_data.db'
 
 clients = []
 
+def authenticate_user(username: str, password: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Get stored hash and salt for this user
+    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        # User not found
+        return False
+
+    stored_hash, salt = row
+
+    # Recreate the salted hash from the password provided and stored salt
+    salted_password = password + salt
+    hashed_password = hashlib.sha256(salted_password.encode()).hexdigest()
+
+    # Compare hashes
+    return hashed_password == stored_hash
+
 def user_exists(username):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -19,19 +41,19 @@ def user_exists(username):
     conn.close()
     return exists
 
-def verify_user(username, password):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        stored_password, stored_salt = result
-        salted_input = password + stored_salt
-        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-        return hashed_input == stored_password
-    return False
+#def verify_user(username, password):
+#    conn = sqlite3.connect(DB_PATH)
+#    cursor = conn.cursor()
+#    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
+#    result = cursor.fetchone()
+#    conn.close()
+#
+#    if result:
+#        stored_password, stored_salt = result
+#        salted_input = password + stored_salt
+#        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
+#        return hashed_input == stored_password
+#    return False
 
 def create_user(username, password, role="user"):
     salt = os.urandom(16).hex()  # Generate a 16-byte random salt
@@ -93,7 +115,7 @@ def process_request(message, sender_conn=None):
         username = message.get("username", "")
         password = message.get("password", "")
         print(f"[LOGIN ATTEMPT] {username}")
-        if verify_user(username, password):
+        if authenticate_user(username, password):
             print(f"[LOGIN_SUCCESS] {username}")
             return {"status": "success", "message": "Login successful"}
         else:

@@ -1,8 +1,6 @@
 import json
 import socket
 import threading
-from login_stuff import current_user
-import login_stuff
 
 client_socket = None
 receive_thread = None
@@ -12,7 +10,7 @@ RECONNECT_DELAY = 3  # Initial delay (in seconds)
 MAX_RECONNECT_DELAY = 30
 running = True
 
-def start_client_connection(username):
+def start_client_connection(username, password):
     import time
     global client_socket, receive_thread, client_connected, running, chat_messages
 
@@ -47,7 +45,8 @@ def start_client_connection(username):
                 try:
                     login_payload = json.dumps({
                         "action": "login",
-                        "username": username
+                        "username": username,
+                        "password": password
                         # Add "password": password if needed
                     })
                     client_socket.sendall(login_payload.encode())
@@ -81,7 +80,7 @@ def start_client_connection(username):
         time.sleep(reconnect_delay)
         reconnect_delay = min(MAX_RECONNECT_DELAY, reconnect_delay * 2)
 
-start_client_connection(login_stuff.login_username)
+#start_client_connection(username)
 
 def send_chat_message(raw_text, username):
     if client_socket:
@@ -95,6 +94,8 @@ def send_chat_message(raw_text, username):
             client_socket.sendall(message.encode())
         except Exception as e:
             print(f"Failed to send message: {e}")
+    else:
+        print("[ERROR] Cannot send message - socket is not connected")
 
 
 def receive_messages(sock, username):
