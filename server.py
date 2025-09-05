@@ -163,6 +163,26 @@ def process_request(message, sender_conn=None):
         users = fetch_all_users()
         return {"status": "success", "users": users}
 
+    elif action == "get_logs":
+        # Fetch logs from the database
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")  # Or whatever table you use
+        logs = cursor.fetchall()
+        conn.close()
+
+        log_entries = [
+            {"username": row[0], "action": row[1], "timestamp": row[2]} for row in logs
+        ]
+
+        response = {
+            "action": "admin_logs",
+            "status": "success",
+            "logs": log_entries
+        }
+
+        sender_conn.sendall(json.dumps(response).encode())
+
     elif action == "update_user":
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):

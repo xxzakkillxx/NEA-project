@@ -83,6 +83,7 @@ def start_client_connection(username, password):
 #start_client_connection(username)
 
 def send_chat_message(raw_text, username):
+    global client_socket
     if client_socket:
         message = json.dumps({
             "action": "chat",
@@ -98,13 +99,13 @@ def send_chat_message(raw_text, username):
         print("[ERROR] Cannot send message - socket is not connected")
 
 
-def receive_messages(sock, username):
+def receive_messages(client_socket, username):
     buffer = ""
     decoder = json.JSONDecoder()
 
     while True:
         try:
-            data = sock.recv(1024).decode('utf-8')
+            data = client_socket.recv(1024).decode('utf-8')
             if not data:
                 break
 
@@ -143,7 +144,6 @@ def receive_messages(sock, username):
             print(f"[ERROR receiving message]: {e}")
             break
 
-sock = None
 def send_message(message: dict):
     """
     Send a dictionary message to the server via the socket connection.
@@ -151,14 +151,14 @@ def send_message(message: dict):
     Args:
         message (dict): The message to send to the server.
     """
-    global sock
-    if sock is None:
+    global client_socket
+    if client_socket is None:
         print("Error: socket is not connected")
         return
 
     try:
         serialized = json.dumps(message).encode('utf-8')
-        sock.sendall(serialized)
+        client_socket.sendall(serialized)
         print(f"Sent message to server: {message}")
     except Exception as e:
         print(f"Error sending message: {e}")
