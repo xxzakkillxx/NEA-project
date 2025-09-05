@@ -96,7 +96,7 @@ def delete_user(target_username):
 # -----------------------------------------------------------------------
 
 def process_request(message, sender_conn=None):
-    print(f"[DEBUG] Incoming message: {message}")
+    print(f"[SERVER] Received message: {message}")
     action = message.get("action")
     print(f"[PROCESS_REQUEST] Action: {action}, Message: {message}")
     print(f"[PROCESS_REQUEST] Received message: {message}")
@@ -156,13 +156,14 @@ def process_request(message, sender_conn=None):
     elif action == "get_user_role":
         print(f"[PROCESS_REQUEST] Handling get_user_role for {message.get('username')}")
         username = message.get("username", "")
+        print(f"[SERVER] get_user_role requested for username: {username}")
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         conn.close()
         role = result[0] if result else "user"
-        print(f"[PROCESS_REQUEST] Found role: {role} for user: {username}")
+        print(f"[SERVER] Role for user '{username}': {role}")
         return {
             "action": "get_user_role",
             "status": "success",
