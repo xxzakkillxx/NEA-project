@@ -232,6 +232,7 @@ def handle_client(conn, addr):
                 continue
 
             response = process_request(message, sender_conn=conn)
+            print(f"[DEBUG SEND]: {json.dumps(response)[:50]}... (truncated)")
             conn.sendall((json.dumps(response) + "\n").encode())
 
         except Exception as e:

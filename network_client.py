@@ -101,7 +101,6 @@ def send_chat_message(raw_text, username):
 
 def receive_messages(client_socket, username):
     buffer = ""
-    decoder = json.JSONDecoder()
 
     while True:
         try:
@@ -111,13 +110,19 @@ def receive_messages(client_socket, username):
 
             buffer += data
 
-            while buffer:
-                try:
-                    # Try to decode a full JSON message from the buffer
-                    message, index = decoder.raw_decode(buffer)
-                    buffer = buffer[index:].lstrip()  # Remove parsed part + strip whitespace
+            # Split buffer by newline, keep incomplete last part
+            lines = buffer.split('\n')
 
-                    # Debug print to verify message
+            # The last line might be incomplete, so save it for next iteration
+            buffer = lines.pop()
+
+            for line in lines:
+                if not line.strip():
+                    continue  # skip empty lines
+
+                try:
+                    message = json.loads(line)
+
                     print(f"[DECODED MESSAGE]: {message}")
 
                     if isinstance(message, dict) and message.get("action") == "chat":
@@ -132,18 +137,17 @@ def receive_messages(client_socket, username):
                         print(display_message)
                         chat_messages.append(display_message)
 
-                    # Ignore status messages silently or print if you want:
-                    # else:
-                    #     print(f"[OTHER MESSAGE]: {message}")
+                    # handle other message types here
 
                 except json.JSONDecodeError as e:
-                    print(f"[PARTIAL BUFFER]: {buffer[:100]}")  # Show up to 100 chars of the buffer
                     print(f"[JSON ERROR]: {e}")
-                    break
+                    print(f"[LINE CAUSING ERROR]: {line}")
+                    # If JSON error on a supposedly complete line, might be corrupted data
 
         except Exception as e:
             print(f"[ERROR receiving message]: {e}")
             break
+
 
 def send_message(message: dict):
     """
