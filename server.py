@@ -164,6 +164,22 @@ def process_request(message, sender_conn=None):
         users = fetch_all_users()
         return {"status": "success", "users": users}
 
+    elif action == "get_user_role":
+        target_user = message.get("username")
+        if not target_user:
+            return {"status": "error", "message": "Username required"}
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM users WHERE username = ?", (target_user,))
+        result = cursor.fetchone()
+        conn.close()
+
+        if result:
+            return {"status": "success", "role": result[0]}
+        else:
+            return {"status": "error", "message": "User not found", "role": "user"}
+
     elif action == "get_logs":
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
