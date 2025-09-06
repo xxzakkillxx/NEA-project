@@ -1,14 +1,3 @@
-import json
-import socket
-import threading
-
-client_socket = None
-receive_thread = None
-chat_messages = []
-client_connected = False
-RECONNECT_DELAY = 3  # Initial delay (in seconds)
-MAX_RECONNECT_DELAY = 30
-running = True
 
 def start_client_connection(username, password, logs_handler=None):
     import time

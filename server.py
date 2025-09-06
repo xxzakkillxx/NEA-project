@@ -129,7 +129,6 @@ def process_request(message, sender_conn=None):
             hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
             if hashed_input == stored_password:
                 print(f"[LOGIN_SUCCESS] {username}")
-                # Send a structured response with the user's role
                 return {"action": "login_result", "status": "success", "username": username, "role": user_role}
             else:
                 print(f"[LOGIN_FAILED] {username} (Incorrect password)")
@@ -148,7 +147,6 @@ def process_request(message, sender_conn=None):
         if exists:
             conn.close()
             return {"action": "signup_result", "status": "error", "message": "Username already taken."}
-        # Hash and salt the password
         salt = os.urandom(16).hex()
         hashed_password = hashlib.sha256((password + salt).encode()).hexdigest()
         cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)",
@@ -179,20 +177,31 @@ def process_request(message, sender_conn=None):
             print(f"[ERROR] Failed to send to sender: {e}")
         return {"status": "success", "message": "Message sent"}
 
-    # --------- New admin management actions ---------
-
-    elif action == "fetch_users":
-        requesting_user = message.get("username", "")
-        if not check_is_admin(requesting_user):
-            return {"status": "error", "message": "Admin privileges required"}
-        users = fetch_all_users()
-        return {"status": "success", "users": users}
+    elif action == "get_all_users":
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT username, role FROM users")
+            users = cursor.fetchall()
+            conn.close()
+            # Format the data into a list of lists, which is JSON-serializable
+            return {
+                "action": "all_users",
+                "status": "success",
+                "users": users
+            }
+        except Exception as e:
+            print(f"[SERVER ERROR] Failed to get users: {e}")
+            return {
+                "action": "all_users",
+                "status": "error",
+                "message": "Failed to retrieve users."
+            }
 
     elif action == "get_logs":
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
             return {"status": "error", "message": "Admin privileges required"}
-        # Fetch logs from the database
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
@@ -211,17 +220,13 @@ def process_request(message, sender_conn=None):
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
             return {"status": "error", "message": "Admin privileges required"}
-
         target_user = message.get("target_username")
         new_password = message.get("new_password", None)
         new_role = message.get("new_role", None)
-
         if not target_user:
             return {"status": "error", "message": "Target username required"}
-
         if not (new_password or new_role):
             return {"status": "error", "message": "Nothing to update"}
-
         update_user(target_user, new_password, new_role)
         return {"status": "success", "message": f"User {target_user} updated"}
 
@@ -229,15 +234,11 @@ def process_request(message, sender_conn=None):
         requesting_user = message.get("username", "")
         if not check_is_admin(requesting_user):
             return {"status": "error", "message": "Admin privileges required"}
-
         target_user = message.get("target_username")
         if not target_user:
             return {"status": "error", "message": "Target username required"}
-
         delete_user(target_user)
         return {"status": "success", "message": f"User {target_user} deleted"}
-
-    # ------------------------------------------------------
 
     else:
         print(f"[WARN] Unknown action: {action}")

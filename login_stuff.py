@@ -4,8 +4,12 @@ import hashlib
 import os
 import re
 from datetime import datetime
-import network_client
 import socket
+import queue
+import json
+import threading
+
+screen_change_queue = queue.Queue()
 
 pygame.init()
 WIDTH, HEIGHT = 800, 600
@@ -14,47 +18,189 @@ pygame.display.set_caption("Login & Signup System")
 FONT = pygame.font.SysFont("arial", 24)
 current_screen = "login"
 
+client_socket = None
+receive_thread = None
+chat_messages = []
+client_connected = False
+RECONNECT_DELAY = 3  # Initial delay (in seconds)
+MAX_RECONNECT_DELAY = 30
+running = True
+_message_handler = None
+
+def start_client_connection():
+    import time
+    global client_socket, receive_thread, client_connected, running, chat_messages
+
+    SERVER_HOST = 'tramway.proxy.rlwy.net'
+    SERVER_PORT = 23620
+    RECONNECT_DELAY = 3
+    MAX_RECONNECT_DELAY = 30
+
+    reconnect_delay = RECONNECT_DELAY
+    client_connected = False
+    running = True
+
+    while running:
+        try:
+            print("[INFO] Connecting to server...")
+            chat_messages.append("🔌 Connecting to server...")
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect((SERVER_HOST, SERVER_PORT))
+            print(f"[DEBUG] Connected to server at '{SERVER_HOST}':{SERVER_PORT}")
+
+            client_connected = True
+            reconnect_delay = RECONNECT_DELAY  # Reset delay after success
+
+            chat_messages.append("✅ Connected to server.")
+
+            receive_thread = threading.Thread(
+                target=receive_messages,
+                args=(client_socket,), # Removed username and logs_handler
+                daemon=True
+            )
+            receive_thread.start()
+
+            break  # Leave the loop after a successful connection
+
+        except (ConnectionRefusedError, socket.error) as e:
+            print(f"[ERROR] Failed to connect or lost connection: {e}")
+            client_connected = False
+            chat_messages.append("⚠️ Lost connection to server.")
+
+        if not running:
+            break
+
+        chat_messages.append(f"🔁 Retrying in {reconnect_delay} seconds...")
+        print(f"[INFO] Reconnecting in {reconnect_delay} seconds...")
+        time.sleep(reconnect_delay)
+        reconnect_delay = min(MAX_RECONNECT_DELAY, reconnect_delay * 2)
+
+def send_chat_message(raw_text, username):
+    global client_socket
+    if client_socket:
+        message = json.dumps({
+            "action": "chat",
+            "username": username,
+            "content": raw_text
+        })
+        print(f"Sending to server: {message}")  # Debug print
+        try:
+            client_socket.sendall(message.encode())
+        except Exception as e:
+            print(f"Failed to send message: {e}")
+    else:
+        print("[ERROR] Cannot send message - socket is not connected")
+
+
+def receive_messages(client_socket):
+    buffer = ""
+
+    while True:
+        try:
+            data = client_socket.recv(1024).decode('utf-8')
+            if not data:
+                break
+            buffer += data
+            lines = buffer.split('\n')
+            buffer = lines.pop()
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    message = json.loads(line)
+                    print(f"[DECODED MESSAGE]: {message}")
+                    if isinstance(message, dict):
+                        # The single point of handling all messages is handle_server_response
+                        handle_server_response(message)
+                except json.JSONDecodeError as e:
+                    print(f"[JSON ERROR]: {e}")
+                    print(f"[LINE CAUSING ERROR]: {line}")
+        except Exception as e:
+            print(f"[ERROR receiving message]: {e}")
+            break
+
+def send_message(message: dict):
+    """
+    Send a dictionary message to the server via the socket connection.
+
+    Args:
+        message (dict): The message to send to the server.
+    """
+    global client_socket
+    if client_socket is None:
+        print("Error: socket is not connected")
+        return
+
+    try:
+        serialized = json.dumps(message).encode('utf-8')
+        client_socket.sendall(serialized)
+        print(f"Sent message to server: {message}")
+    except Exception as e:
+        print(f"Error sending message: {e}")
 
 logs_cache = []
 
 def request_admin_logs():
-    import network_client
-    if network_client.client_connected and network_client.client_socket:
-        network_client.send_message({"action": "get_logs", "username": current_user})
+    if client_connected and client_socket:
+        send_message({"action": "get_logs", "username": current_user})
     else:
         print("[ERROR] Cannot request logs — disconnected.")
 
 def handle_server_response(response):
-    # Parse server response and update logs cache
-    global logs_cache, current_user, current_screen
-    if response.get("action") == "admin_logs":
-        logs_cache = response.get("logs", [])
+    global logs_cache, current_user, chat_messages
+
     action = response.get("action")
     status = response.get("status")
-    message = response.get("message")
 
-    if action == "login_result":
+    if action == "admin_logs":
+        logs_cache = response.get("logs", [])
+        print(f"[GUI] Logs cache updated with {len(logs_cache)} entries.")
+
+    elif action == "login_result":
         if status == "success":
             current_user = response.get("username")
             user_role = response.get("role")
-            log_action(current_user, "Logged in successfully")
             if user_role == "admin":
+                print(f"[SUCCESS] Login successful for admin: {current_user}")
                 switch_screen("admin_panel")
             else:
+                print(f"[SUCCESS] Login successful for user: {current_user}")
                 switch_screen("welcome_screen")
-            network_client.start_client_connection(current_user,
-                                                   login_password.text)  # You may need to pass the password for persistent connection.
+            log_action(current_user, "Logged in successfully")
         else:
+            error_msg = response.get("message", "An unknown error occurred.")
             login_username.error = True
-            login_username.error_msg = message
+            login_username.error_msg = error_msg
+            login_password.error = True
+            login_password.error_msg = ""
+            print(f"[ERROR] Login failed: {error_msg}")
 
     elif action == "signup_result":
         if status == "success":
-            print("Sign Up Success!")
+            print("[CLIENT] Signup successful!")
             switch_screen("login")
         else:
+            error_msg = response.get("message", "An unknown error occurred.")
             signup_username.error = True
-            signup_username.error_msg = message
+            signup_username.error_msg = error_msg
+            print(f"[ERROR] Signup failed: {error_msg}")
+
+    elif action == "all_users":
+        global user_list_cache
+        user_list_cache = response.get("users", [])
+        print(f"[GUI] User list cache updated with {len(user_list_cache)} users.")
+
+    # ❗ New: Handle chat messages here ❗
+    elif action == "chat":
+        sender = response.get("username", "Unknown")
+        content = response.get("content", "")
+        # Add logic for current_user if you want to differentiate
+        if sender == current_user:
+            display_message = f"You: {content}"
+        else:
+            display_message = f"{sender}: {content}"
+        print(display_message)
+        chat_messages.append(display_message)
 
 def initialize_database():
     conn = sqlite3.connect(DB_PATH)
@@ -204,7 +350,7 @@ receive_thread = None
 client_connected = False
 chat_input_active = False
 logs_requested = False
-
+user_list_cache = []
 
 chat_scroll_offset = 0
 max_visible_chat_messages = 10  # or whatever fits your current chat box
@@ -236,13 +382,20 @@ def clear_signup_errors():
     signup_password.clear_error()
     signup_confirm.clear_error()
 
-def get_all_users():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, role FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    return users  # List of (username, role)
+def request_all_users():
+    if client_connected:
+        send_message({"action": "get_all_users"})
+    else:
+        print("[ERROR] Not connected to server. Cannot request users.")
+
+# Modify your manage_users_button to call this new function
+manage_users_button = Button(
+    x=10, y=60, width=180, height=40,
+    text="Manage Users",
+    color=(0, 100, 200), hover_color=(0, 150, 255),
+    text_color=(255, 255, 255), hover_text_color=(255, 255, 0),
+    action=lambda: switch_screen("manage_users") or request_all_users()
+)
 
 def reset_user_password(username):
     global password_reset_message
@@ -320,7 +473,6 @@ def update_logs_cache(logs):
     logs_cache = logs
     print(f"[GUI] logs_cache updated with {len(logs)} entries")
 
-
 def delete_user(username):
     global selected_user
     conn = sqlite3.connect(DB_PATH)
@@ -332,15 +484,6 @@ def delete_user(username):
     selected_user = None
     switch_screen("manage_users")
     log_action(current_user, f"Deleted user {selected_user}")
-
-
-#def fetch_admin_logs():
-#    conn = sqlite3.connect(DB_PATH)
-#    cursor = conn.cursor()
-#    cursor.execute("SELECT id, username, message, timestamp FROM logs ORDER BY id DESC")
-#    logs = cursor.fetchall()
-#    conn.close()
-#    return logs
 
 def toggle_user_role(username):
     conn = sqlite3.connect(DB_PATH)
@@ -374,7 +517,7 @@ def draw_chat():
     start_y = chat_rect.top + 10
 
     wrapped_lines = []
-    for msg in network_client.chat_messages:
+    for msg in chat_messages:
         wrapped_lines.extend(wrap_text(msg, font, max_width))
 
     max_visible_lines = chat_box_height // line_height - 1
@@ -428,7 +571,7 @@ def draw_manage_users():
     title = FONT.render("Manage Users", True, (0, 0, 0))
     SCREEN.blit(title, (300, 30))
 
-    users = get_all_users()
+    users = user_list_cache
     user_buttons = []
     y_offset = 100
 
@@ -613,8 +756,8 @@ def request_signup():
 
     if not error_found:
         # Send signup request to the server
-        if network_client.client_connected and network_client.client_socket:
-            network_client.send_message({"action": "signup", "username": username, "password": password})
+        if client_connected and client_socket:
+            send_message({"action": "signup", "username": username, "password": password})
         else:
             print("[ERROR] Cannot send signup request - not connected to server.")
             signup_username.error = True
@@ -719,66 +862,47 @@ def switch_screen(name):
 
     if name == "logs_viewer":
         try:
-            import network_client
-            if network_client.client_connected:
+            if client_connected:
                 request_admin_logs()
             else:
                 print("[INFO] Delaying log request until client connects...")
         except Exception as e:
             print(f"[ERROR] Failed to request logs: {e}")
 
+    if name == "manage_users":
+        if client_connected:
+            send_message({"action": "get_all_users"})
+        else:
+            print("[ERROR] Cannot request users - not connected.")
+
 def request_login():
+    # 1. Clear any previous error messages
     login_username.clear_error()
     login_password.clear_error()
 
+    # 2. Get and strip the username and password
     username = login_username.text.strip()
     password = login_password.text.strip()
 
-    if username == '':
+    # 3. Perform basic client-side validation
+    if not username:
         login_username.error = True
         login_username.error_msg = "Username cannot be empty"
         return
-
-    if password == '':
+    if not password:
         login_password.error = True
         login_password.error_msg = "Password cannot be empty"
         return
 
-    # Use the network client to send a login request to the server
-    if network_client.client_connected and network_client.client_socket:
-        network_client.send_message({"action": "login", "username": username, "password": password})
+    # 4. Send the request to the server
+    if client_connected and client_socket:
+        print("[CLIENT] Sending login request to server...")
+        send_message({"action": "login", "username": username, "password": password})
     else:
+        # 5. Handle the disconnected state gracefully
         print("[ERROR] Cannot send login request - not connected to server.")
         login_password.error = True
         login_password.error_msg = "Server not connected. Please try again later."
-
-#    if not user_exists(username):
-#        login_username.error = True
-#        login_username.error_msg = "Username does not exist"
-#        return
-#
-#    if not verify_user(username, password):
-#        login_password.error = True
-#        login_password.error_msg = "Incorrect password"
-#        return
-
-#    print("Login successful!")
-#    global current_user, current_screen
-#    current_user = username
-#    log_action(current_user, "Logged in successfully")
-#    if is_admin(username):
-#        current_screen = "admin_panel"
-#        # After setting current_user and switching screen
-#        print(current_user)
-#        print(password)
-#        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
-#
-#    else:
-#        current_screen = "welcome_screen"
-#        # After setting current_user and switching screen
-#        print(current_user)
-#        print(password)
-#        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
 
 login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), request_login)
 signup_button = Button(410, 320, 90, 40, "Sign Up", (0, 0, 200), (0, 0, 255), (255, 255, 255), (0, 0, 0), action=lambda: switch_screen("signup"))
@@ -803,10 +927,21 @@ chat_toggle_button = Button(
     action=lambda: toggle_chat()# <== This line is important
 )
 
-current_screen = "login"
+try:
+    start_client_connection()
+except Exception as e:
+    print(f"[CRITICAL ERROR] Failed to start client connection: {e}")
+
 running = True
 clock = pygame.time.Clock()
 while running:
+    try:
+        # get_nowait() retrieves an item immediately or raises an exception
+        new_screen = screen_change_queue.get_nowait()
+        switch_screen(new_screen)
+    except queue.Empty:
+        # Do nothing if the queue is empty
+        pass
     pygame.event.set_allowed(None)  # Restrict event types
     pygame.event.set_allowed([pygame.QUIT, pygame.KEYDOWN, pygame.KEYUP, pygame.MOUSEBUTTONDOWN, pygame.TEXTINPUT])
     pygame.key.start_text_input()
@@ -858,7 +993,7 @@ while running:
                 chat_input_text = chat_input_text[:-1]
             elif event.key == pygame.K_RETURN:
                 if chat_input_text.strip() != "":
-                    network_client.send_chat_message(chat_input_text.strip(), current_user)
+                    send_chat_message(chat_input_text.strip(), current_user)
                     chat_input_text = ""
             else:
                 if len(event.unicode) > 0 and event.unicode.isprintable():
@@ -938,10 +1073,10 @@ while running:
     pygame.display.flip()
     clock.tick(60)
 
-if network_client.client_connected and network_client.client_socket:
+if client_connected and client_socket:
     try:
-        network_client.client_socket.close()
-        network_client.client_connected = False
+        client_socket.close()
+        client_connected = False
         print("[DEBUG] Disconnected from server.")
     except Exception as e:
         print(f"[ERROR] Error closing socket: {e}")
