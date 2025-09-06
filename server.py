@@ -111,28 +111,52 @@ def delete_user(target_username):
 
 def process_request(message, sender_conn=None):
     action = message.get("action")
+    username = message.get("username")
 
     if action == "login":
-        username = message.get("username", "")
         password = message.get("password", "")
         print(f"[LOGIN ATTEMPT] {username}")
-        if authenticate_user(username, password):
-            print(f"[LOGIN_SUCCESS] {username}")
-            return {"status": "success", "message": "Login successful"}
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT password, salt, role FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+        conn.close()
+
+        if result:
+            stored_password, stored_salt, user_role = result
+            salted_input = password + stored_salt
+            hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
+            if hashed_input == stored_password:
+                print(f"[LOGIN_SUCCESS] {username}")
+                # Send a structured response with the user's role
+                return {"action": "login_result", "status": "success", "username": username, "role": user_role}
+            else:
+                print(f"[LOGIN_FAILED] {username} (Incorrect password)")
+                return {"action": "login_result", "status": "error", "message": "Incorrect password."}
         else:
-            print(f"[LOGIN_FAILED] {username}")
-            return {"status": "error", "message": "Invalid credentials"}
+            print(f"[LOGIN_FAILED] {username} (User not found)")
+            return {"action": "login_result", "status": "error", "message": "Username not found."}
 
     elif action == "signup":
-        username = message.get("username", "")
         password = message.get("password", "")
         print(f"[SIGNUP_ATTEMPT] {username}")
-        if user_exists(username):
-            return {"status": "error", "message": "Username already exists"}
-        else:
-            create_user(username, password)
-            print(f"[SIGNUP_SUCCESS] {username}")
-            return {"status": "success", "message": "Signup successful"}
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+        exists = cursor.fetchone() is not None
+        if exists:
+            conn.close()
+            return {"action": "signup_result", "status": "error", "message": "Username already taken."}
+        # Hash and salt the password
+        salt = os.urandom(16).hex()
+        hashed_password = hashlib.sha256((password + salt).encode()).hexdigest()
+        cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)",
+                       (username, hashed_password, salt, "user"))
+        conn.commit()
+        conn.close()
+        print(f"[SIGNUP_SUCCESS] {username}")
+        return {"action": "signup_result", "status": "success", "message": "Signup successful."}
 
     elif action == "chat":
         content = message.get("content", "")

@@ -26,9 +26,35 @@ def request_admin_logs():
 
 def handle_server_response(response):
     # Parse server response and update logs cache
-    global logs_cache
+    global logs_cache, current_user, current_screen
     if response.get("action") == "admin_logs":
         logs_cache = response.get("logs", [])
+    action = response.get("action")
+    status = response.get("status")
+    message = response.get("message")
+
+    if action == "login_result":
+        if status == "success":
+            current_user = response.get("username")
+            user_role = response.get("role")
+            log_action(current_user, "Logged in successfully")
+            if user_role == "admin":
+                switch_screen("admin_panel")
+            else:
+                switch_screen("welcome_screen")
+            network_client.start_client_connection(current_user,
+                                                   login_password.text)  # You may need to pass the password for persistent connection.
+        else:
+            login_username.error = True
+            login_username.error_msg = message
+
+    elif action == "signup_result":
+        if status == "success":
+            print("Sign Up Success!")
+            switch_screen("login")
+        else:
+            signup_username.error = True
+            signup_username.error_msg = message
 
 def initialize_database():
     conn = sqlite3.connect(DB_PATH)
@@ -512,7 +538,7 @@ def draw_logs_viewer():
         message = log.get("action", "No action")
         timestamp = log.get("timestamp", "N/A")
         if ' ' in timestamp:
-            _,date_part, time_part = timestamp.split(' ')
+            date_part, time_part = timestamp.split(' ')
         else:
             date_part = timestamp
             time_part = "N/A"
@@ -547,7 +573,7 @@ def draw_logs_viewer():
     scroll_up_button.draw(SCREEN)
     scroll_down_button.draw(SCREEN)
 
-def signup_submit_action():
+def request_signup():
     username = signup_username.text.strip()
     password = signup_password.text.strip()
     confirm = signup_confirm.text.strip()
@@ -586,19 +612,28 @@ def signup_submit_action():
         error_found = True
 
     if not error_found:
-        create_user(username, password)
-        print("Sign Up Success! Data:")
-        print(f"Username: {signup_username.text}")
-        print(f"Password: {signup_password.text}")
-        signup_username.text = ''
-        signup_password.text = ''
-        signup_confirm.text = ''
-        clear_signup_errors()
-        global current_screen
-        current_screen = "login"
-        log_action(username, "Signed up")
-    else:
-        print("Sign Up Failed: Errors found")
+        # Send signup request to the server
+        if network_client.client_connected and network_client.client_socket:
+            network_client.send_message({"action": "signup", "username": username, "password": password})
+        else:
+            print("[ERROR] Cannot send signup request - not connected to server.")
+            signup_username.error = True
+            signup_username.error_msg = "Server not connected. Please try again later."
+
+    #if not error_found:
+    #    create_user(username, password)
+    #    print("Sign Up Success! Data:")
+    #    print(f"Username: {signup_username.text}")
+    #    print(f"Password: {signup_password.text}")
+    #    signup_username.text = ''
+    #    signup_password.text = ''
+    #    signup_confirm.text = ''
+    #    clear_signup_errors()
+    #    global current_screen
+    #    current_screen = "login"
+    #    log_action(username, "Signed up")
+    #else:
+    #    print("Sign Up Failed: Errors found")
 
 def is_admin(username):
     conn = sqlite3.connect(DB_PATH)
@@ -692,7 +727,7 @@ def switch_screen(name):
         except Exception as e:
             print(f"[ERROR] Failed to request logs: {e}")
 
-def dummy_login():
+def request_login():
     login_username.clear_error()
     login_password.clear_error()
 
@@ -709,38 +744,45 @@ def dummy_login():
         login_password.error_msg = "Password cannot be empty"
         return
 
-    if not user_exists(username):
-        login_username.error = True
-        login_username.error_msg = "Username does not exist"
-        return
-
-    if not verify_user(username, password):
-        login_password.error = True
-        login_password.error_msg = "Incorrect password"
-        return
-
-    print("Login successful!")
-    global current_user, current_screen
-    current_user = username
-    log_action(current_user, "Logged in successfully")
-    if is_admin(username):
-        current_screen = "admin_panel"
-        # After setting current_user and switching screen
-        print(current_user)
-        print(password)
-        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
-
+    # Use the network client to send a login request to the server
+    if network_client.client_connected and network_client.client_socket:
+        network_client.send_message({"action": "login", "username": username, "password": password})
     else:
-        current_screen = "welcome_screen"
-        # After setting current_user and switching screen
-        print(current_user)
-        print(password)
-        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
+        print("[ERROR] Cannot send login request - not connected to server.")
+        login_password.error = True
+        login_password.error_msg = "Server not connected. Please try again later."
 
+#    if not user_exists(username):
+#        login_username.error = True
+#        login_username.error_msg = "Username does not exist"
+#        return
+#
+#    if not verify_user(username, password):
+#        login_password.error = True
+#        login_password.error_msg = "Incorrect password"
+#        return
 
-login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), dummy_login)
+#    print("Login successful!")
+#    global current_user, current_screen
+#    current_user = username
+#    log_action(current_user, "Logged in successfully")
+#    if is_admin(username):
+#        current_screen = "admin_panel"
+#        # After setting current_user and switching screen
+#        print(current_user)
+#        print(password)
+#        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
+#
+#    else:
+#        current_screen = "welcome_screen"
+#        # After setting current_user and switching screen
+#        print(current_user)
+#        print(password)
+#        network_client.start_client_connection(current_user,password, logs_handler=update_logs_cache)
+
+login_button = Button(300, 320, 90, 40, "Login", (0, 200, 0), (0, 255, 0), (255, 255, 255), (0, 0, 0), request_login)
 signup_button = Button(410, 320, 90, 40, "Sign Up", (0, 0, 200), (0, 0, 255), (255, 255, 255), (0, 0, 0), action=lambda: switch_screen("signup"))
-signup_submit = Button(300, 380, 200, 40, "Create Account", (100, 0, 200), (150, 0, 255), (255, 255, 255), (0, 0, 0), signup_submit_action)
+signup_submit = Button(300, 380, 200, 40, "Create Account", (100, 0, 200), (150, 0, 255), (255, 255, 255), (0, 0, 0), request_signup)
 back_button = Button(10,10,100,40,"Back",(150,0,0),(200,0,0),(255,255,255),(255,255,0),action=lambda: switch_screen("login"))
 logout_button = Button(x=10, y=10, width=100, height=40, text="Log Out", color=(150, 0, 0), hover_color=(200, 0, 0), text_color=(255, 255, 255), hover_text_color=(255, 255, 0), action=lambda: switch_screen("login"))
 manage_users_button = Button(x=10, y=60, width=180, height=40,text="Manage Users",color=(0, 100, 200),hover_color=(0, 150, 255),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=lambda: switch_screen("manage_users"))
