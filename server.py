@@ -228,7 +228,7 @@ def process_request(message, sender_conn=None):
         if not (new_password or new_role):
             return {"status": "error", "message": "Nothing to update"}
         update_user(target_user, new_password, new_role)
-        return {"status": "success", "message": f"User {target_user} updated"}
+        return {"action": "update_user_result", "status": "success", "message": f"User {target_user} updated"}
 
     elif action == "delete_user":
         requesting_user = message.get("username", "")
@@ -238,7 +238,7 @@ def process_request(message, sender_conn=None):
         if not target_user:
             return {"status": "error", "message": "Target username required"}
         delete_user(target_user)
-        return {"status": "success", "message": f"User {target_user} deleted"}
+        return {"action": "delete_user_result", "status": "success", "message": f"User {target_user} deleted"}
 
     else:
         print(f"[WARN] Unknown action: {action}")

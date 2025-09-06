@@ -161,6 +161,7 @@ def handle_server_response(response):
             current_user = response.get("username")
             user_role = response.get("role")
             if user_role == "admin":
+                request_admin_logs()
                 print(f"[SUCCESS] Login successful for admin: {current_user}")
                 switch_screen("admin_panel")
             else:
@@ -189,6 +190,26 @@ def handle_server_response(response):
         global user_list_cache
         user_list_cache = response.get("users", [])
         print(f"[GUI] User list cache updated with {len(user_list_cache)} users.")
+
+    elif action == "update_user_result":
+        if status == "success":
+            print("[CLIENT] User updated successfully. Requesting updated user list.")
+            # Request the new list of users immediately
+            send_message({"action": "get_all_users"})
+            request_admin_logs()
+        else:
+            error_msg = response.get("message", "An unknown error occurred.")
+            print(f"[ERROR] User update failed: {error_msg}")
+
+    elif action == "delete_user_result":
+        if status == "success":
+            print("[CLIENT] User deleted successfully. Requesting updated user list.")
+            # Request the new list of users immediately
+            send_message({"action": "get_all_users"})
+            request_admin_logs()
+        else:
+            error_msg = response.get("message", "An unknown error occurred.")
+            print(f"[ERROR] User deletion failed: {error_msg}")
 
     # ❗ New: Handle chat messages here ❗
     elif action == "chat":
