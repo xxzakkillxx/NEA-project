@@ -1,9 +1,5 @@
 import pygame
-import sqlite3
-import hashlib
-import os
 import re
-from datetime import datetime
 import socket
 import queue
 import json
@@ -147,7 +143,7 @@ def request_admin_logs():
         print("[ERROR] Cannot request logs — disconnected.")
 
 def handle_server_response(response):
-    global logs_cache, current_user, chat_messages
+    global logs_cache, current_user, chat_messages, user_role
 
     action = response.get("action")
     status = response.get("status")
@@ -161,13 +157,13 @@ def handle_server_response(response):
             current_user = response.get("username")
             user_role = response.get("role")
             if user_role == "admin":
-                request_admin_logs()
                 print(f"[SUCCESS] Login successful for admin: {current_user}")
                 switch_screen("admin_panel")
+                # Removed the log_action call as the server now handles it.
             else:
                 print(f"[SUCCESS] Login successful for user: {current_user}")
                 switch_screen("welcome_screen")
-            log_action(current_user, "Logged in successfully")
+                # Removed the log_action call as the server now handles it.
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             login_username.error = True
@@ -194,9 +190,8 @@ def handle_server_response(response):
     elif action == "update_user_result":
         if status == "success":
             print("[CLIENT] User updated successfully. Requesting updated user list.")
-            # Request the new list of users immediately
+            # Request the new list of users and logs immediately
             send_message({"action": "get_all_users"})
-            request_admin_logs()
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             print(f"[ERROR] User update failed: {error_msg}")
@@ -204,70 +199,22 @@ def handle_server_response(response):
     elif action == "delete_user_result":
         if status == "success":
             print("[CLIENT] User deleted successfully. Requesting updated user list.")
-            # Request the new list of users immediately
+            # Request the new list of users and logs immediately
             send_message({"action": "get_all_users"})
-            request_admin_logs()
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             print(f"[ERROR] User deletion failed: {error_msg}")
 
-    # ❗ New: Handle chat messages here ❗
+    # Handle chat messages here
     elif action == "chat":
         sender = response.get("username", "Unknown")
         content = response.get("content", "")
-        # Add logic for current_user if you want to differentiate
         if sender == current_user:
             display_message = f"You: {content}"
         else:
             display_message = f"{sender}: {content}"
         print(display_message)
         chat_messages.append(display_message)
-
-def initialize_database():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT,
-            salt TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-DB_PATH = 'game_data.db'
-initialize_database()
-
-def user_exists(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
-
-def verify_user(username, password):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        stored_password, stored_salt = result
-        salted_input = password + stored_salt
-        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-        return hashed_input == stored_password
-    return False
-
-def clear_all_users():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM users")
-    conn.commit()
-    conn.close()
-    print("All users deleted.")
 
 def is_strong_password(password):
     if len(password) < 8:
@@ -279,19 +226,6 @@ def is_strong_password(password):
     if not re.search(r'[._@]', password):
         return False, "Password must contain at least one special character (., _, @)."
     return True, ""
-
-def create_user(username, password, role="user"):
-    salt = os.urandom(16).hex()  # Generate a 16-byte random salt
-    salted_password = password + salt
-    hashed_password = hashlib.sha256(salted_password.encode()).hexdigest()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, salt TEXT, role TEXT)")
-    cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)", (username, hashed_password, salt, role))
-
-    conn.commit()
-    conn.close()
 
 def select_user(username):
     global selected_user, current_screen
@@ -409,44 +343,25 @@ def request_all_users():
     else:
         print("[ERROR] Not connected to server. Cannot request users.")
 
-# Modify your manage_users_button to call this new function
-manage_users_button = Button(
-    x=10, y=60, width=180, height=40,
-    text="Manage Users",
-    color=(0, 100, 200), hover_color=(0, 150, 255),
-    text_color=(255, 255, 255), hover_text_color=(255, 255, 0),
-    action=lambda: switch_screen("manage_users") or request_all_users()
-)
-
+# New version
 def reset_user_password(username):
-    global password_reset_message
-
     new_pw = new_password_input.text.strip()
     confirm_pw = confirm_password_input.text.strip()
-
     if new_pw == "" or confirm_pw == "":
         password_reset_message = "Password fields cannot be empty."
         return
-
     if new_pw != confirm_pw:
         password_reset_message = "Passwords do not match."
         return
-
-    salt = os.urandom(16).hex()
-    hashed_pw = hashlib.sha256((new_pw + salt).encode()).hexdigest()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET password = ?, salt = ? WHERE username = ?", (hashed_pw, salt, username))
-    conn.commit()
-    conn.close()
-
-    log_action(current_user, f"Reset password for user '{username}'")
-    password_reset_message = f"Password updated for '{username}'"
-
-    # Clear inputs
-    new_password_input.text = ""
-    confirm_password_input.text = ""
+    # Send a request to the server instead of touching the DB
+    send_message({
+        "action": "update_user",
+        "target_username": username,
+        "new_password": new_pw,
+        "username": current_user
+    })
+    # The response will update the UI
+    password_reset_message = "Request sent to server..."
 
 def wrap_text(text, font, max_width):
     words = text.split(' ')
@@ -462,14 +377,6 @@ def wrap_text(text, font, max_width):
             current_line = word + ' '
     lines.append(current_line)
     return lines
-
-def log_action(username, message):
-    print(f"LOGGING: {username} - {message}")  # Debug print
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS logs (
@@ -494,31 +401,37 @@ def update_logs_cache(logs):
     logs_cache = logs
     print(f"[GUI] logs_cache updated with {len(logs)} entries")
 
+# New version
 def delete_user(username):
-    global selected_user
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM users WHERE username = ?", (username,))
-    conn.commit()
-    conn.close()
-    print(f"User {username} deleted.")
+    send_message({
+        "action": "delete_user",
+        "target_username": username,
+        "username": current_user
+    })
     selected_user = None
-    switch_screen("manage_users")
-    log_action(current_user, f"Deleted user {selected_user}")
+    # The response from the server will trigger the screen switch
 
+# New version
 def toggle_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    if result:
-        current_role = result[0]
-        new_role = "admin" if current_role == "user" else "user"
-        cursor.execute("UPDATE users SET role = ? WHERE username = ?", (new_role, username))
-        conn.commit()
-        print(f"Changed role of {username} to {new_role}")
-        log_action(current_user, f"Toggled role for {selected_user} to {new_role}")
-    conn.close()
+    # Fetch the current role from your local cache (user_list_cache)
+    current_role = "user" # Default
+    for u in user_list_cache:
+        if u[0] == username:
+            current_role = u[1]
+            break
+    new_role = "admin" if current_role == "user" else "user"
+    send_message({
+        "action": "update_user",
+        "target_username": username,
+        "new_role": new_role,
+        "username": current_user
+    })
+
+def show_manage_users():
+    global current_screen
+    current_screen = "manage_users"
+    if client_connected:
+        send_message({"action": "get_all_users"})
 
 def draw_chat():
     global chat_box_width, chat_box_height, max_chat_scroll_offset
@@ -764,11 +677,6 @@ def request_signup():
             signup_confirm.error_msg = "Passwords do not match"
             error_found = True
 
-    if not error_found and user_exists(signup_username.text):
-        signup_username.error = True
-        signup_username.error_msg = "Username already taken"
-        error_found = True
-
     valid, message = is_strong_password(password)
     if not valid:
         signup_password.error = True
@@ -784,43 +692,14 @@ def request_signup():
             signup_username.error = True
             signup_username.error_msg = "Server not connected. Please try again later."
 
-    #if not error_found:
-    #    create_user(username, password)
-    #    print("Sign Up Success! Data:")
-    #    print(f"Username: {signup_username.text}")
-    #    print(f"Password: {signup_password.text}")
-    #    signup_username.text = ''
-    #    signup_password.text = ''
-    #    signup_confirm.text = ''
-    #    clear_signup_errors()
-    #    global current_screen
-    #    current_screen = "login"
-    #    log_action(username, "Signed up")
-    #else:
-    #    print("Sign Up Failed: Errors found")
-
-def is_admin(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None and result[0] == 'admin'
-
 def draw_logged_in_user():
+    global user_role # Make sure this is accessible
+
     if current_user:
-        role = get_user_role(current_user)
-        user_text = FONT.render(f"Logged in as: {current_user} ({role})", True, (0, 0, 0))
+        # Use the global user_role variable directly
+        user_text = FONT.render(f"Logged in as: {current_user} ({user_role})", True, (0, 0, 0))
         SCREEN.blit(user_text, (10, HEIGHT - 30))  # Bottom-left corner
         chat_toggle_button.draw(SCREEN)
-
-def get_user_role(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else "user"  # default to "user" if not found
 
 def draw_admin_panel():
     SCREEN.fill((255, 230, 230))  # light red background
@@ -930,12 +809,12 @@ signup_button = Button(410, 320, 90, 40, "Sign Up", (0, 0, 200), (0, 0, 255), (2
 signup_submit = Button(300, 380, 200, 40, "Create Account", (100, 0, 200), (150, 0, 255), (255, 255, 255), (0, 0, 0), request_signup)
 back_button = Button(10,10,100,40,"Back",(150,0,0),(200,0,0),(255,255,255),(255,255,0),action=lambda: switch_screen("login"))
 logout_button = Button(x=10, y=10, width=100, height=40, text="Log Out", color=(150, 0, 0), hover_color=(200, 0, 0), text_color=(255, 255, 255), hover_text_color=(255, 255, 0), action=lambda: switch_screen("login"))
-manage_users_button = Button(x=10, y=60, width=180, height=40,text="Manage Users",color=(0, 100, 200),hover_color=(0, 150, 255),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=lambda: switch_screen("manage_users"))
+manage_users_button = Button(x=10, y=60, width=180, height=40,text="Manage Users",color=(0, 100, 200),hover_color=(0, 150, 255),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=show_manage_users)
 manage_users_back_button = Button(x=10, y=10, width=100, height=40,text="Back",color=(150, 0, 0),hover_color=(200, 0, 0),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=lambda: switch_screen("admin_panel"))
 reset_password_button = Button( x=50, y=100, width=200, height=40, text="Reset Password", color=(100, 150, 100), hover_color=(120, 180, 120), text_color=(255, 255, 255), hover_text_color=(0, 0, 0), action=lambda: reset_user_password(selected_user))
 delete_user_button = Button( x=50, y=160, width=200, height=40, text="Delete User", color=(150, 0, 0), hover_color=(200, 0, 0), text_color=(255, 255, 255), hover_text_color=(255, 255, 0), action=lambda: delete_user(selected_user))
 toggle_role_button = Button( x=50, y=220, width=200, height=40, text="Toggle Admin/User", color=(0, 100, 200), hover_color=(0, 150, 255), text_color=(255, 255, 255), hover_text_color=(0, 0, 0), action=lambda: toggle_user_role(selected_user))
-back_to_manage_users_button = Button(x=10, y=10, width=100, height=40,text="Back",color=(150, 0, 0),hover_color=(200, 0, 0),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=lambda: switch_screen("manage_users"))
+back_to_manage_users_button = Button(x=10, y=10, width=100, height=40,text="Back",color=(150, 0, 0),hover_color=(200, 0, 0),text_color=(255, 255, 255),hover_text_color=(255, 255, 0),action=show_manage_users)
 view_logs_button = Button(10, 120, 200, 40, "View Logs", (60, 60, 180), (100, 100, 220), (255, 255, 255), (255, 255, 0), action=lambda: switch_screen("logs_viewer"))
 back_button_logs = Button(10, 10, 100, 40, "Back", (150, 0, 0), (200, 0, 0), (255, 255, 255), (255, 255, 0), action=lambda: switch_screen("admin_panel"))
 scroll_up_button = Button(5, 500, 40, 40, "▲", (180, 180, 180), (150, 150, 150), (0, 0, 0), (0, 0, 0), scroll_up)

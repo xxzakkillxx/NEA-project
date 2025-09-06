@@ -1,285 +1,284 @@
 import socket
 import threading
 import json
-import sqlite3
-import hashlib
-import os
+import firebase_admin
+from firebase_admin import credentials, firestore
+from datetime import datetime
+import bcrypt
+import logging
 
-HOST = '0.0.0.0'
-PORT = int(os.environ.get('PORT', 50007))  # <-- dynamical port
-DB_PATH = 'game_data.db'
+# Set up basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-clients = []
+# --- Firestore Setup ---
+try:
+    # IMPORTANT: Replace this with the actual path to your service account key file
+    cred = credentials.Certificate('service-account-key.json')
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    logging.info("Firebase app initialized successfully.")
+except Exception as e:
+    logging.error(f"Failed to initialize Firebase app: {e}")
+    db = None
 
-def authenticate_user(username: str, password: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
 
-    # Get stored hash and salt for this user
-    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-    row = cursor.fetchone()
-    conn.close()
+# --- User and Log Management Functions (Using Firestore) ---
+def add_user_to_db(username, password, role="user"):
+    """Adds a new user to the Firestore 'users' collection."""
+    if not db:
+        return False, "Database not connected."
 
-    if row is None:
-        # User not found
-        return False
-
-    stored_hash, salt = row
-
-    # Recreate the salted hash from the password provided and stored salt
-    salted_password = password + salt
-    hashed_password = hashlib.sha256(salted_password.encode()).hexdigest()
-
-    # Compare hashes
-    return hashed_password == stored_hash
-
-def user_exists(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
-
-#def verify_user(username, password):
-#    conn = sqlite3.connect(DB_PATH)
-#    cursor = conn.cursor()
-#    cursor.execute("SELECT password, salt FROM users WHERE username = ?", (username,))
-#    result = cursor.fetchone()
-#    conn.close()
-#
-#    if result:
-#        stored_password, stored_salt = result
-#        salted_input = password + stored_salt
-#        hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-#        return hashed_input == stored_password
-#    return False
-
-def create_user(username, password, role="user"):
-    salt = os.urandom(16).hex()  # Generate a 16-byte random salt
-    salted_password = password + salt
-    hashed_password = hashlib.sha256(salted_password.encode()).hexdigest()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, salt TEXT, role TEXT)")
-    cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)", (username, hashed_password, salt, role))
-
-    conn.commit()
-    conn.close()
-
-# ----------- New helper functions for admin user management -----------
-
-def check_is_admin(username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    print(f"[DEBUG] check_is_admin: user={username}, role={result}")
-    return result is not None and result[0] == "admin"
-
-def fetch_all_users():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, role FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    # Return list of dicts without sensitive info
-    return [{"username": u[0], "role": u[1]} for u in users]
-
-def update_user(target_username, new_password=None, new_role=None):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    if new_password:
-        salt = os.urandom(16).hex()
-        hashed_password = hashlib.sha256((new_password + salt).encode()).hexdigest()
-        cursor.execute("UPDATE users SET password = ?, salt = ? WHERE username = ?", (hashed_password, salt, target_username))
-    if new_role:
-        cursor.execute("UPDATE users SET role = ? WHERE username = ?", (new_role, target_username))
-    conn.commit()
-    conn.close()
-
-def delete_user(target_username):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM users WHERE username = ?", (target_username,))
-    conn.commit()
-    conn.close()
-
-# -----------------------------------------------------------------------
-
-def process_request(message, sender_conn=None):
-    action = message.get("action")
-    username = message.get("username")
-
-    if action == "login":
-        password = message.get("password", "")
-        print(f"[LOGIN ATTEMPT] {username}")
-
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT password, salt, role FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-        conn.close()
-
-        if result:
-            stored_password, stored_salt, user_role = result
-            salted_input = password + stored_salt
-            hashed_input = hashlib.sha256(salted_input.encode()).hexdigest()
-            if hashed_input == stored_password:
-                print(f"[LOGIN_SUCCESS] {username}")
-                return {"action": "login_result", "status": "success", "username": username, "role": user_role}
-            else:
-                print(f"[LOGIN_FAILED] {username} (Incorrect password)")
-                return {"action": "login_result", "status": "error", "message": "Incorrect password."}
-        else:
-            print(f"[LOGIN_FAILED] {username} (User not found)")
-            return {"action": "login_result", "status": "error", "message": "Username not found."}
-
-    elif action == "signup":
-        password = message.get("password", "")
-        print(f"[SIGNUP_ATTEMPT] {username}")
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-        exists = cursor.fetchone() is not None
-        if exists:
-            conn.close()
-            return {"action": "signup_result", "status": "error", "message": "Username already taken."}
-        salt = os.urandom(16).hex()
-        hashed_password = hashlib.sha256((password + salt).encode()).hexdigest()
-        cursor.execute("INSERT INTO users (username, password, salt, role) VALUES (?, ?, ?, ?)",
-                       (username, hashed_password, salt, "user"))
-        conn.commit()
-        conn.close()
-        print(f"[SIGNUP_SUCCESS] {username}")
-        return {"action": "signup_result", "status": "success", "message": "Signup successful."}
-
-    elif action == "chat":
-        content = message.get("content", "")
-        username = message.get("username", "Unknown")
-        print(f"[CHAT] {username}: {content}")
-        broadcast_msg = json.dumps({
-            "action": "chat",
-            "username": username,
-            "content": content
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    try:
+        user_ref = db.collection('users').document(username)
+        user_ref.set({
+            'username': username,
+            'password': hashed_password,
+            'role': role
         })
-        for client in clients:
-            if client != sender_conn:
-                try:
-                    client.sendall((broadcast_msg + "\n").encode())
-                except Exception as e:
-                    print(f"[ERROR] Failed to send to client: {e}")
-        try:
-            sender_conn.sendall((broadcast_msg + "\n").encode())
-        except Exception as e:
-            print(f"[ERROR] Failed to send to sender: {e}")
-        return {"status": "success", "message": "Message sent"}
+        log_action(username, "signup", f"User '{username}' created.")
+        return True, "User created successfully."
+    except Exception as e:
+        logging.error(f"Error adding user to database: {e}")
+        return False, "Failed to create user."
 
-    elif action == "get_all_users":
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT username, role FROM users")
-            users = cursor.fetchall()
-            conn.close()
-            # Format the data into a list of lists, which is JSON-serializable
-            return {
-                "action": "all_users",
-                "status": "success",
-                "users": users
-            }
-        except Exception as e:
-            print(f"[SERVER ERROR] Failed to get users: {e}")
-            return {
-                "action": "all_users",
-                "status": "error",
-                "message": "Failed to retrieve users."
-            }
 
-    elif action == "get_logs":
-        requesting_user = message.get("username", "")
-        if not check_is_admin(requesting_user):
-            return {"status": "error", "message": "Admin privileges required"}
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
-        logs = cursor.fetchall()
-        conn.close()
-        log_entries = [
-            {"username": row[1], "action": row[2], "timestamp": row[3]} for row in logs
-        ]
-        return {
-            "action": "admin_logs",
-            "status": "success",
-            "logs": log_entries
-        }
+def get_user_from_db(username):
+    """Retrieves a single user document from Firestore."""
+    if not db:
+        return None
+    try:
+        user_ref = db.collection('users').document(username)
+        user_doc = user_ref.get()
+        if user_doc.exists:
+            return user_doc.to_dict()
+        else:
+            return None
+    except Exception as e:
+        logging.error(f"Error getting user from database: {e}")
+        return None
 
-    elif action == "update_user":
-        requesting_user = message.get("username", "")
-        if not check_is_admin(requesting_user):
-            return {"status": "error", "message": "Admin privileges required"}
-        target_user = message.get("target_username")
-        new_password = message.get("new_password", None)
-        new_role = message.get("new_role", None)
-        if not target_user:
-            return {"status": "error", "message": "Target username required"}
-        if not (new_password or new_role):
-            return {"status": "error", "message": "Nothing to update"}
-        update_user(target_user, new_password, new_role)
-        return {"action": "update_user_result", "status": "success", "message": f"User {target_user} updated"}
 
-    elif action == "delete_user":
-        requesting_user = message.get("username", "")
-        if not check_is_admin(requesting_user):
-            return {"status": "error", "message": "Admin privileges required"}
-        target_user = message.get("target_username")
-        if not target_user:
-            return {"status": "error", "message": "Target username required"}
-        delete_user(target_user)
-        return {"action": "delete_user_result", "status": "success", "message": f"User {target_user} deleted"}
+def get_all_users_from_db():
+    """Retrieves all users from the Firestore 'users' collection."""
+    if not db:
+        return []
+    try:
+        users_ref = db.collection('users')
+        users = users_ref.stream()
+        return [(user.get('username'), user.get('role')) for user in users]
+    except Exception as e:
+        logging.error(f"Error getting all users from database: {e}")
+        return []
 
-    else:
-        print(f"[WARN] Unknown action: {action}")
-        return {"status": "error", "message": "Unknown action"}
 
+def update_user_in_db(target_username, new_password=None, new_role=None):
+    """Updates a user's password or role in Firestore."""
+    if not db:
+        return False, "Database not connected."
+
+    try:
+        user_ref = db.collection('users').document(target_username)
+        update_data = {}
+        if new_password:
+            hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            update_data['password'] = hashed_password
+        if new_role:
+            update_data['role'] = new_role
+
+        user_ref.update(update_data)
+        log_action("server", "update_user", f"Admin updated user '{target_username}'.")
+        return True, "User updated successfully."
+    except Exception as e:
+        logging.error(f"Error updating user: {e}")
+        return False, "Failed to update user."
+
+
+def delete_user_from_db(username):
+    """Deletes a user from the Firestore 'users' collection."""
+    if not db:
+        return False, "Database not connected."
+
+    try:
+        db.collection('users').document(username).delete()
+        log_action("server", "delete_user", f"Admin deleted user '{username}'.")
+        return True, "User deleted successfully."
+    except Exception as e:
+        logging.error(f"Error deleting user: {e}")
+        return False, "Failed to delete user."
+
+
+def log_action(username, action, message):
+    """Adds a log entry to the Firestore 'logs' collection."""
+    if not db:
+        return
+    try:
+        log_ref = db.collection('logs').document()
+        log_ref.set({
+            'username': username,
+            'action': action,
+            'message': message,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        })
+    except Exception as e:
+        logging.error(f"Error writing log to database: {e}")
+
+
+def get_admin_logs():
+    """Retrieves all logs from the Firestore 'logs' collection."""
+    if not db:
+        return []
+    try:
+        logs_ref = db.collection('logs').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100)
+        logs = logs_ref.stream()
+        log_list = []
+        for log in logs:
+            log_data = log.to_dict()
+            # Convert Firestore Timestamp to a string for the client
+            if isinstance(log_data.get('timestamp'), datetime):
+                log_data['timestamp'] = log_data['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+            log_list.append(log_data)
+        return log_list
+    except Exception as e:
+        logging.error(f"Error getting admin logs: {e}")
+        return []
+
+
+# --- Server Logic ---
 def handle_client(conn, addr):
-    print(f"New connection from {addr}")
-    while True:
-        try:
-            data = conn.recv(1024)
+    """Handles a single client connection."""
+    logging.info(f"Connected by {addr}")
+    try:
+        while True:
+            data = conn.recv(1024).decode('utf-8')
             if not data:
                 break
-            try:
-                message = json.loads(data.decode())
-            except json.JSONDecodeError:
-                print(f"[WARN] Invalid JSON from {addr}: {data!r}")
-                continue
 
-            response = process_request(message, sender_conn=conn)
-            print(f"[DEBUG SEND]: {json.dumps(response)[:50]}... (truncated)")
-            conn.sendall((json.dumps(response) + "\n").encode())
+            requests = data.split('\n')
+            for req in requests:
+                if not req:
+                    continue
 
-        except Exception as e:
-            print(f"[ERROR] with {addr}: {e}")
-            break
+                try:
+                    message = json.loads(req)
+                    action = message.get("action")
+                    username = message.get("username")
 
-    print(f"Connection closed from {addr}")
-    conn.close()
-    if conn in clients:
-        clients.remove(conn)
+                    if action == "signup":
+                        password = message.get("password")
+                        success, msg = add_user_to_db(username, password)
+                        response = {"action": "signup_result", "status": "success" if success else "error",
+                                    "message": msg}
+                        conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "login":
+                        password = message.get("password")
+                        user_data = get_user_from_db(username)
+                        if user_data and bcrypt.checkpw(password.encode('utf-8'),
+                                                        user_data['password'].encode('utf-8')):
+                            log_action(username, "login", "User logged in.")
+                            response = {"action": "login_result", "status": "success", "username": username,
+                                        "role": user_data['role']}
+                        else:
+                            log_action(username, "failed_login", "Failed login attempt.")
+                            response = {"action": "login_result", "status": "error",
+                                        "message": "Invalid username or password."}
+                        conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "get_all_users":
+                        if get_user_from_db(username)['role'] == 'admin':
+                            users = get_all_users_from_db()
+                            response = {"action": "all_users", "users": users}
+                            conn.sendall(json.dumps(response).encode() + b'\n')
+                        else:
+                            response = {"action": "all_users", "users": [], "message": "Access denied."}
+                            conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "update_user":
+                        target_username = message.get('target_username')
+                        new_password = message.get('new_password')
+                        new_role = message.get('new_role')
+
+                        if get_user_from_db(username)['role'] == 'admin':
+                            success, msg = update_user_in_db(target_username, new_password, new_role)
+                            response = {"action": "update_user_result", "status": "success" if success else "error",
+                                        "message": msg}
+                        else:
+                            response = {"action": "update_user_result", "status": "error", "message": "Access denied."}
+                        conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "delete_user":
+                        target_username = message.get('target_username')
+                        if get_user_from_db(username)['role'] == 'admin':
+                            success, msg = delete_user_from_db(target_username)
+                            response = {"action": "delete_user_result", "status": "success" if success else "error",
+                                        "message": msg}
+                        else:
+                            response = {"action": "delete_user_result", "status": "error", "message": "Access denied."}
+                        conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "get_logs":
+                        if get_user_from_db(username)['role'] == 'admin':
+                            logs = get_admin_logs()
+                            response = {"action": "admin_logs", "logs": logs}
+                            conn.sendall(json.dumps(response).encode() + b'\n')
+                        else:
+                            response = {"action": "admin_logs", "logs": [], "message": "Access denied."}
+                            conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "chat":
+                        content = message.get("content")
+                        if content:
+                            log_action(username, "chat", content)
+                            broadcast_message({"action": "chat", "username": username, "content": content})
+
+                except json.JSONDecodeError as e:
+                    logging.error(f"Failed to decode JSON from client: {e}")
+
+    except Exception as e:
+        logging.error(f"Error in client handler for {addr}: {e}")
+    finally:
+        logging.info(f"Client {addr} disconnected.")
+        conn.close()
+
+
+def broadcast_message(message):
+    """Sends a message to all connected clients."""
+    serialized_message = json.dumps(message).encode() + b'\n'
+    for client_conn in list(clients):
+        try:
+            client_conn.sendall(serialized_message)
+        except Exception:
+            clients.remove(client_conn)
+
 
 def main():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((HOST, PORT))
-    s.listen()
-    print(f"Server listening on {HOST}:{PORT}")
+    """Main function to start the server."""
+    global clients
+    clients = []
 
-    while True:
-        conn, addr = s.accept()
-        clients.append(conn)
-        threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+    HOST = '0.0.0.0'
+    PORT = 12345
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((HOST, PORT))
+    server_socket.listen()
+    logging.info(f"Server listening on {HOST}:{PORT}")
+
+    try:
+        while True:
+            conn, addr = server_socket.accept()
+            clients.append(conn)
+            thread = threading.Thread(target=handle_client, args=(conn, addr))
+            thread.daemon = True
+            thread.start()
+    except KeyboardInterrupt:
+        logging.info("Server shutting down...")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
+    finally:
+        server_socket.close()
+
 
 if __name__ == "__main__":
     main()
