@@ -6,17 +6,27 @@ from firebase_admin import credentials, firestore
 from datetime import datetime
 import bcrypt
 import logging
+import os
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Firestore Setup ---
 try:
-    # IMPORTANT: Replace this with the actual path to your service account key file
-    cred = credentials.Certificate('service-account-key.json')
+    # Check for the environment variable, which is the secure way to store credentials
+    key_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+
+    if not key_json:
+        # If the environment variable is not set, we will raise an error.
+        # This forces us to fix the environment variable.
+        raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set.")
+
+    # Load credentials from the environment variable's value
+    cred = credentials.Certificate(json.loads(key_json))
     firebase_admin.initialize_app(cred)
+    logging.info("Firebase app initialized successfully from environment variable.")
+
     db = firestore.client()
-    logging.info("Firebase app initialized successfully.")
 except Exception as e:
     logging.error(f"Failed to initialize Firebase app: {e}")
     db = None
