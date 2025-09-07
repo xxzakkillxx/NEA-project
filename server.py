@@ -73,12 +73,12 @@ def get_user_from_db(username):
         logging.error(f"Error getting user from database: {e}")
         return None
 
-def get_all_users_from_db():
-    """Retrieves all users from the Firestore 'users' collection."""
+def get_all_users_from_db(app_id):
+    """Retrieves all users from the correct Firestore collection."""
     if not db:
         return []
     try:
-        users_ref = db.collection('users')
+        users_ref = db.collection(f"artifacts/{app_id}/public/data/users")
         users = users_ref.stream()
         return [(user.get('username'), user.get('role')) for user in users]
     except Exception as e:

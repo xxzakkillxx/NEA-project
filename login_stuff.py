@@ -425,8 +425,8 @@ def toggle_user_role(username):
 def show_manage_users():
     global current_screen
     current_screen = "manage_users"
-    if client_connected and current_username:
-        send_message({"action": "get_all_users", "username": current_username})
+    if client_connected and current_user:
+        send_message({"action": "get_all_users", "username": current_user})
 
 def draw_chat():
     global chat_box_width, chat_box_height, max_chat_scroll_offset
