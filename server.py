@@ -124,7 +124,7 @@ def get_all_users_from_db(app_id):
         return []
 
 
-def update_user_in_db(app_id, target_username, acting_username, new_password=None, new_role=None):
+def update_user_in_db(app_id, target_username, new_password=None, new_role=None):
     """Updates a user's password or role in Firestore using a merge operation."""
     if not db:
         return False, "Database not connected."
@@ -139,21 +139,21 @@ def update_user_in_db(app_id, target_username, acting_username, new_password=Non
             update_data['role'] = new_role
 
         user_ref.set(update_data, merge=True)
-        log_action(app_id, acting_username, "update_user", f"Admin updated user '{target_username}'.")
+        log_action(app_id, "server", "update_user", f"Admin updated user '{target_username}'.")
         return True, "User updated successfully."
     except Exception as e:
         logging.error(f"Error updating user: {e}")
         return False, "Failed to update user."
 
 
-def delete_user_from_db(app_id, target_username, acting_username):
+def delete_user_from_db(app_id, target_username):
     """Deletes a user from the Firestore 'users' collection."""
     if not db:
         return False, "Database not connected."
     path = f"artifacts/{app_id}/public/data/users"
     try:
         db.collection(path).document(target_username).delete()
-        log_action(app_id, acting_username, "delete_user", f"Admin deleted user '{target_username}'.")
+        log_action(app_id, "server", "delete_user", f"Admin deleted user '{target_username}'.")
         return True, "User deleted successfully."
     except Exception as e:
         logging.error(f"Error deleting user: {e}")
@@ -295,7 +295,7 @@ def handle_client(conn, addr):
                         target_username = message.get('target_username')
                         user_data = get_user_from_db(app_id, username)
                         if user_data and user_data.get('role') == 'admin':
-                            success, msg = delete_user_from_db(app_id, username,target_username)
+                            success, msg = delete_user_from_db(app_id, target_username)
                             response = {"action": "delete_user_result", "status": "success" if success else "error",
                                         "message": msg}
                             conn.sendall(json.dumps(response).encode() + b'\n')
