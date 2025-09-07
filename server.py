@@ -86,13 +86,13 @@ def get_all_users_from_db(app_id):
         return []
 
 
-def update_user_in_db(target_username, new_password=None, new_role=None):
+def update_user_in_db(app_id, target_username, new_password=None, new_role=None):
     """Updates a user's password or role in Firestore."""
     if not db:
         return False, "Database not connected."
+    path = f"artifacts/{app_id}/public/data/users"
 
     try:
-        path = f"artifacts/{app_id}/public/data/users"
         user_ref = db.collection(path).document(target_username)
         update_data = {}
         if new_password:
