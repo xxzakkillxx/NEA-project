@@ -3,12 +3,16 @@ import threading
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
-from datetime import datetime
+from datetime import datetime, timedelta
 import bcrypt
 import logging
 import os
 import time
 import pytz
+
+# --- Configuration ---
+# You can set a manual time offset here if the automatic timezone conversion is incorrect.
+TIME_OFFSET_HOURS = 1
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -175,7 +179,7 @@ def log_action(app_id, username, action, message):
 
 def get_admin_logs(app_id, user_tz_name):
     """
-    Retrieves and converts log timestamps to the user's specific timezone.
+    Retrieves and converts log timestamps to the user's specific timezone, with an optional offset.
     """
     if not db:
         return []
@@ -185,13 +189,15 @@ def get_admin_logs(app_id, user_tz_name):
         logs = logs_ref.stream()
         log_list = []
         user_timezone = pytz.timezone(user_tz_name)
+
+        # Define the offset
+        offset_timedelta = timedelta(hours=TIME_OFFSET_HOURS)
+
         for log in logs:
             log_data = log.to_dict()
-            # Convert Firestore Timestamp to a timezone-aware datetime object
             if isinstance(log_data.get('timestamp'), datetime):
-                # Make the datetime timezone-aware (as UTC)
-                utc_dt = log_data['timestamp'].replace(tzinfo=pytz.utc)
-                # Convert it to the user's local timezone
+                # Apply the offset before conversion
+                utc_dt = log_data['timestamp'].replace(tzinfo=pytz.utc) + offset_timedelta
                 local_dt = utc_dt.astimezone(user_timezone)
                 log_data['timestamp'] = local_dt.strftime("%Y-%m-%d %H:%M:%S")
             log_list.append(log_data)
