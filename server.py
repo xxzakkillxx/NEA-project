@@ -49,7 +49,7 @@ def add_user_to_db(username, password, role="user"):
             'password': hashed_password,
             'role': role
         })
-        log_action(username, "signup", f"User '{username}' created.")
+        log_action(app_id, username, "signup", f"User '{username}' created.")
         return True, "User created successfully."
     except Exception as e:
         logging.error(f"Error adding user to database: {e}")
@@ -116,14 +116,14 @@ def delete_user_from_db(username):
 
     try:
         db.collection('users').document(username).delete()
-        log_action("server", "delete_user", f"Admin deleted user '{username}'.")
+        log_action(app_id, "server", "delete_user", f"Admin deleted user '{username}'.")
         return True, "User deleted successfully."
     except Exception as e:
         logging.error(f"Error deleting user: {e}")
         return False, "Failed to delete user."
 
 
-def log_action(username, action, message):
+def log_action(app_id, username, action, message):
     """Adds a log entry to the Firestore 'logs' collection."""
     if not db:
         return
@@ -190,11 +190,11 @@ def handle_client(conn, addr):
                         user_data = get_user_from_db(app_id, username)
                         if user_data and bcrypt.checkpw(password.encode('utf-8'),
                                                         user_data['password'].encode('utf-8')):
-                            log_action(username, "login", "User logged in.")
+                            log_action(app_id, username, "login", "User logged in.")
                             response = {"action": "login_result", "status": "success", "username": username,
                                         "role": user_data['role']}
                         else:
-                            log_action(username, "failed_login", "Failed login attempt.")
+                            log_action(app_id, username, "failed_login", "Failed login attempt.")
                             response = {"action": "login_result", "status": "error",
                                         "message": "Invalid username or password."}
                         conn.sendall(json.dumps(response).encode() + b'\n')
@@ -247,7 +247,7 @@ def handle_client(conn, addr):
                     elif action == "chat":
                         content = message.get("content")
                         if content:
-                            log_action(username, "chat", content)
+                            log_action(app_id, username, "chat", content)
                             broadcast_message({"action": "chat", "username": username, "content": content})
 
                 except json.JSONDecodeError as e:
