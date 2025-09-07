@@ -92,7 +92,8 @@ def update_user_in_db(target_username, new_password=None, new_role=None):
         return False, "Database not connected."
 
     try:
-        user_ref = db.collection(f"artifacts/{app_id}/public/data/users")
+        path = f"artifacts/{app_id}/public/data/users"
+        user_ref = db.collection(path).document(target_username)
         update_data = {}
         if new_password:
             hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
