@@ -153,7 +153,7 @@ def get_admin_logs():
         logging.error(f"Error getting admin logs: {e}")
         return []
 
-app_id = os.environ.get('RAILWAY_APP_ID')
+app_id = os.environ.get('tramway.proxy.rlwy.net')
 def set_user_role_to_admin(target_username):
     """
     TEMPORARY: A function to manually set a user's role to 'admin'.
