@@ -10,22 +10,22 @@ import os
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+app_id = os.environ.get('RAILWAY_APP_ID')
+
+if not app_id:
+    # This will crash the server immediately if the variable isn't set, which is what we want.
+    raise ValueError("RAILWAY_APP_ID environment variable is not set. This is required for correct database pathing.")
 
 # --- Firestore Setup ---
 try:
-    # Check for the environment variable, which is the secure way to store credentials
     key_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
 
     if not key_json:
-        # If the environment variable is not set, we will raise an error.
-        # This forces us to fix the environment variable.
         raise ValueError("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is not set.")
 
-    # Load credentials from the environment variable's value
     cred = credentials.Certificate(json.loads(key_json))
     firebase_admin.initialize_app(cred)
     logging.info("Firebase app initialized successfully from environment variable.")
-
     db = firestore.client()
 except Exception as e:
     logging.error(f"Failed to initialize Firebase app: {e}")
@@ -38,9 +38,12 @@ def add_user_to_db(username, password, role="user"):
     if not db:
         return False, "Database not connected."
 
+    # Use the correct, dynamic path
+    path = f"artifacts/{app_id}/public/data/users"
+
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     try:
-        user_ref = db.collection('users').document(username)
+        user_ref = db.collection(path).document(username)
         user_ref.set({
             'username': username,
             'password': hashed_password,
@@ -58,7 +61,9 @@ def get_user_from_db(username):
     if not db:
         return None
     try:
-        user_ref = db.collection('users').document(username)
+        # Use the correct, dynamic path
+        path = f"artifacts/{app_id}/public/data/users"
+        user_ref = db.collection(path).document(username)
         user_doc = user_ref.get()
         if user_doc.exists:
             return user_doc.to_dict()
@@ -67,7 +72,6 @@ def get_user_from_db(username):
     except Exception as e:
         logging.error(f"Error getting user from database: {e}")
         return None
-
 
 def get_all_users_from_db():
     """Retrieves all users from the Firestore 'users' collection."""
