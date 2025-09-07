@@ -199,7 +199,8 @@ def handle_client(conn, addr):
                         conn.sendall(json.dumps(response).encode() + b'\n')
 
                     elif action == "get_all_users":
-                        if get_user_from_db(username)['role'] == 'admin':
+                        user_info = get_user_from_db(username)
+                        if user_info and user_info.get('role') == 'admin':
                             users = get_all_users_from_db()
                             response = {"action": "all_users", "users": users}
                             conn.sendall(json.dumps(response).encode() + b'\n')
