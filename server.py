@@ -187,7 +187,7 @@ def handle_client(conn, addr):
 
                     elif action == "login":
                         password = message.get("password")
-                        user_data = get_user_from_db(username)
+                        user_data = get_user_from_db(app_id, username)
                         if user_data and bcrypt.checkpw(password.encode('utf-8'),
                                                         user_data['password'].encode('utf-8')):
                             log_action(username, "login", "User logged in.")
@@ -227,7 +227,7 @@ def handle_client(conn, addr):
 
                     elif action == "delete_user":
                         target_username = message.get('target_username')
-                        if get_user_from_db(username)['role'] == 'admin':
+                        if get_user_from_db(app_id, username)['role'] == 'admin':
                             success, msg = delete_user_from_db(target_username)
                             response = {"action": "delete_user_result", "status": "success" if success else "error",
                                         "message": msg}
