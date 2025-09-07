@@ -153,6 +153,26 @@ def get_admin_logs():
         logging.error(f"Error getting admin logs: {e}")
         return []
 
+app_id = os.environ.get('RAILWAY_APP_ID')
+def set_user_role_to_admin(target_username):
+    """
+    TEMPORARY: A function to manually set a user's role to 'admin'.
+    This should be removed after the admin account is set up for security.
+    """
+    if not db:
+        return False, "Database not connected."
+
+    # Use the correct path to write data
+    path = f"artifacts/{app_id}/public/data/users"
+
+    try:
+        user_ref = db.collection(path).document(target_username)
+        user_ref.update({'role': 'admin'})
+        log_action("server_script", "promote_to_admin", f"User '{target_username}' promoted to admin.")
+        return True, f"User '{target_username}' successfully promoted to admin."
+    except Exception as e:
+        logging.error(f"Error promoting user to admin: {e}")
+        return False, f"Failed to promote user '{target_username}'."
 
 # --- Server Logic ---
 def handle_client(conn, addr):
@@ -207,6 +227,19 @@ def handle_client(conn, addr):
                         else:
                             response = {"action": "all_users", "users": [], "message": "Access denied."}
                             conn.sendall(json.dumps(response).encode() + b'\n')
+
+                    elif action == "promote_to_admin":  # <-- TEMPORARY ACTION
+                        target_username = message.get('target_username')
+                        # This check is a security measure to ensure this action
+                        # can only be triggered by a logged-in user.
+                        if username:
+                            success, msg = set_user_role_to_admin(target_username)
+                            response = {"action": "promote_result", "status": "success" if success else "error",
+                                        "message": msg}
+                        else:
+                            response = {"action": "promote_result", "status": "error",
+                                        "message": "Authentication required."}
+                        conn.sendall(json.dumps(response).encode() + b'\n')
 
                     elif action == "update_user":
                         target_username = message.get('target_username')
