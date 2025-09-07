@@ -176,7 +176,11 @@ def handle_client(conn, addr):
 
                     if action == "signup":
                         password = message.get("password")
-                        success, msg = add_user_to_db(username, password)
+                        #success, msg = add_user_to_db(username, password)
+                        #response = {"action": "signup_result", "status": "success" if success else "error",
+                        #            "message": msg}
+                        #conn.sendall(json.dumps(response).encode() + b'\n')
+                        success, msg = add_user_to_db(username, password, role="admin")
                         response = {"action": "signup_result", "status": "success" if success else "error",
                                     "message": msg}
                         conn.sendall(json.dumps(response).encode() + b'\n')
