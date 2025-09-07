@@ -8,6 +8,7 @@ import bcrypt
 import logging
 import os
 import time
+import pytz
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,6 +36,10 @@ except Exception as e:
 # Global list to store connected clients and a lock for thread-safe access
 clients = []
 clients_lock = threading.Lock()
+
+# A new dictionary to store each user's timezone
+user_timezones = {}
+user_timezones_lock = threading.Lock()
 
 
 # --- Broadcasting Functions ---
@@ -168,8 +173,10 @@ def log_action(app_id, username, action, message):
         logging.error(f"Error writing log to database: {e}")
 
 
-def get_admin_logs(app_id):
-    """Retrieves all logs from the Firestore 'logs' collection."""
+def get_admin_logs(app_id, user_tz_name):
+    """
+    Retrieves and converts log timestamps to the user's specific timezone.
+    """
     if not db:
         return []
     path = f"artifacts/{app_id}/public/data/logs"
@@ -177,10 +184,16 @@ def get_admin_logs(app_id):
         logs_ref = db.collection(path).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100)
         logs = logs_ref.stream()
         log_list = []
+        user_timezone = pytz.timezone(user_tz_name)
         for log in logs:
             log_data = log.to_dict()
+            # Convert Firestore Timestamp to a timezone-aware datetime object
             if isinstance(log_data.get('timestamp'), datetime):
-                log_data['timestamp'] = log_data['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+                # Make the datetime timezone-aware (as UTC)
+                utc_dt = log_data['timestamp'].replace(tzinfo=pytz.utc)
+                # Convert it to the user's local timezone
+                local_dt = utc_dt.astimezone(user_timezone)
+                log_data['timestamp'] = local_dt.strftime("%Y-%m-%d %H:%M:%S")
             log_list.append(log_data)
         return log_list
     except Exception as e:
@@ -195,6 +208,9 @@ def handle_client(conn, addr):
     # Add client to the global list for broadcasting
     with clients_lock:
         clients.append(conn)
+
+    current_username = None  # Track the current user for this connection
+
     try:
         while True:
             data = conn.recv(1024).decode('utf-8')
@@ -208,6 +224,10 @@ def handle_client(conn, addr):
                     message = json.loads(req)
                     action = message.get("action")
                     username = message.get("username")
+
+                    if username:
+                        current_username = username
+
                     if action == "signup":
                         password = message.get("password")
                         success, msg = add_user_to_db(username, password)
@@ -230,6 +250,16 @@ def handle_client(conn, addr):
                             response = {"action": "login_result", "status": "error",
                                         "message": "Invalid username or password."}
                         conn.sendall(json.dumps(response).encode() + b'\n')
+                    elif action == "update_timezone":
+                        # NEW ACTION: store the user's timezone on the server
+                        user_tz = message.get("timezone")
+                        if current_username and user_tz:
+                            with user_timezones_lock:
+                                user_timezones[current_username] = user_tz
+                            logging.info(f"Stored timezone for {current_username}: {user_tz}")
+                            response = {"action": "timezone_updated", "status": "success"}
+                            conn.sendall(json.dumps(response).encode() + b'\n')
+
                     elif action == "get_all_users":
                         request_username = message.get("username")
                         user_data = get_user_from_db(app_id, request_username)
@@ -270,9 +300,12 @@ def handle_client(conn, addr):
                             response = {"action": "delete_user_result", "status": "error", "message": "Access denied."}
                             conn.sendall(json.dumps(response).encode() + b'\n')
                     elif action == "get_logs":
+                        # MODIFIED: Get the user's timezone from our new dictionary
                         user_data = get_user_from_db(app_id, username)
                         if user_data and user_data.get('role') == 'admin':
-                            logs = get_admin_logs(app_id)
+                            with user_timezones_lock:
+                                user_tz_name = user_timezones.get(username, 'UTC')  # Default to UTC
+                            logs = get_admin_logs(app_id, user_tz_name)
                             response = {"action": "admin_logs", "logs": logs}
                         else:
                             response = {"action": "admin_logs", "logs": [], "message": "Access denied."}
