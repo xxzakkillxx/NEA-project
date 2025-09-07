@@ -261,14 +261,14 @@ def broadcast_message(message):
         except Exception:
             clients.remove(client_conn)
 
-
 def main():
     """Main function to start the server."""
     global clients
     clients = []
 
+    # Use the PORT environment variable provided by Railway
     HOST = '0.0.0.0'
-    PORT = 12345
+    PORT = int(os.environ.get('PORT', 50007))  # Use 50007 as a fallback for local testing
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((HOST, PORT))
@@ -288,7 +288,6 @@ def main():
         logging.error(f"An unexpected error occurred: {e}")
     finally:
         server_socket.close()
-
 
 if __name__ == "__main__":
     main()

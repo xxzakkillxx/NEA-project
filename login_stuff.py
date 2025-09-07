@@ -143,7 +143,7 @@ def request_admin_logs():
         print("[ERROR] Cannot request logs — disconnected.")
 
 def handle_server_response(response):
-    global logs_cache, current_user, chat_messages, user_role
+    global logs_cache, current_user, chat_messages, user_role, user_list_cache
 
     action = response.get("action")
     status = response.get("status")
@@ -159,11 +159,9 @@ def handle_server_response(response):
             if user_role == "admin":
                 print(f"[SUCCESS] Login successful for admin: {current_user}")
                 switch_screen("admin_panel")
-                # Removed the log_action call as the server now handles it.
             else:
                 print(f"[SUCCESS] Login successful for user: {current_user}")
                 switch_screen("welcome_screen")
-                # Removed the log_action call as the server now handles it.
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             login_username.error = True
@@ -183,15 +181,13 @@ def handle_server_response(response):
             print(f"[ERROR] Signup failed: {error_msg}")
 
     elif action == "all_users":
-        global user_list_cache
         user_list_cache = response.get("users", [])
         print(f"[GUI] User list cache updated with {len(user_list_cache)} users.")
 
     elif action == "update_user_result":
         if status == "success":
             print("[CLIENT] User updated successfully. Requesting updated user list.")
-            # Request the new list of users and logs immediately
-            send_message({"action": "get_all_users"})
+            send_message({"action": "get_all_users", "username": current_user})
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             print(f"[ERROR] User update failed: {error_msg}")
@@ -199,8 +195,7 @@ def handle_server_response(response):
     elif action == "delete_user_result":
         if status == "success":
             print("[CLIENT] User deleted successfully. Requesting updated user list.")
-            # Request the new list of users and logs immediately
-            send_message({"action": "get_all_users"})
+            send_message({"action": "get_all_users", "username": current_user})
         else:
             error_msg = response.get("message", "An unknown error occurred.")
             print(f"[ERROR] User deletion failed: {error_msg}")
