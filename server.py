@@ -56,7 +56,7 @@ def add_user_to_db(username, password, role="user"):
         return False, "Failed to create user."
 
 
-def get_user_from_db(username):
+def get_user_from_db(app_id, username):
     """Retrieves a single user document from Firestore."""
     if not db:
         return None
@@ -87,12 +87,12 @@ def get_all_users_from_db(app_id):
 
 
 def update_user_in_db(app_id, target_username, new_password=None, new_role=None):
-    """Updates a user's password or role in Firestore."""
+    """Updates a user's password or role in Firestore using a merge operation."""
     if not db:
         return False, "Database not connected."
     path = f"artifacts/{app_id}/public/data/users"
-
     try:
+        # Correctly get a DocumentReference for the specific user
         user_ref = db.collection(path).document(target_username)
         update_data = {}
         if new_password:
@@ -101,8 +101,8 @@ def update_user_in_db(app_id, target_username, new_password=None, new_role=None)
         if new_role:
             update_data['role'] = new_role
 
-        user_ref.update(update_data)
-        log_action("server", "update_user", f"Admin updated user '{target_username}'.")
+        user_ref.set(update_data, merge=True)
+        log_action(app_id, "server", "update_user", f"Admin updated user '{target_username}'.")
         return True, "User updated successfully."
     except Exception as e:
         logging.error(f"Error updating user: {e}")
@@ -203,7 +203,7 @@ def handle_client(conn, addr):
                         # Get the username from the client's request
                         request_username = message.get("username")
                         # Check if the user making the request is an admin
-                        user_data = get_user_from_db(request_username)
+                        user_data = get_user_from_db(app_id, request_username)
                         if user_data and user_data.get('role') == 'admin':
                             users = get_all_users_from_db(app_id)
                             response = {"action": "all_users", "users": users}
@@ -217,7 +217,7 @@ def handle_client(conn, addr):
                         new_password = message.get('new_password')
                         new_role = message.get('new_role')
 
-                        if get_user_from_db(username)['role'] == 'admin':
+                        if get_user_from_db(app_id, username)['role'] == 'admin':
                             success, msg = update_user_in_db(target_username, new_password, new_role)
                             response = {"action": "update_user_result", "status": "success" if success else "error",
                                         "message": msg}
@@ -236,7 +236,7 @@ def handle_client(conn, addr):
                         conn.sendall(json.dumps(response).encode() + b'\n')
 
                     elif action == "get_logs":
-                        if get_user_from_db(username)['role'] == 'admin':
+                        if get_user_from_db(app_id, username)['role'] == 'admin':
                             logs = get_admin_logs()
                             response = {"action": "admin_logs", "logs": logs}
                             conn.sendall(json.dumps(response).encode() + b'\n')
