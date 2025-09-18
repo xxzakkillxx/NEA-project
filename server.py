@@ -10,19 +10,14 @@ import os
 import time
 import pytz
 
-# --- Configuration ---
-# You can set a manual time offset here if the automatic timezone conversion is incorrect.
 TIME_OFFSET_HOURS = 1
 
-# Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 app_id = os.environ.get('RAILWAY_APP_ID')
 
 if not app_id:
-    # This will crash the server immediately if the variable isn't set, which is what we want.
     raise ValueError("RAILWAY_APP_ID environment variable is not set. This is required for correct database pathing.")
 
-# --- Firestore Setup ---
 try:
     key_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
 
@@ -37,18 +32,17 @@ except Exception as e:
     logging.error(f"Failed to initialize Firebase app: {e}")
     db = None
 
-# Global list to store connected clients and a lock for thread-safe access
 clients = []
 clients_lock = threading.Lock()
 
-# A new dictionary to store each user's timezone
+players_in_game = {}
+players_in_game_lock = threading.Lock()
+
 user_timezones = {}
 user_timezones_lock = threading.Lock()
 
 
-# --- Broadcasting Functions ---
 def broadcast_message(message):
-    """Sends a message to all connected clients."""
     encoded_message = (json.dumps(message) + '\n').encode('utf-8')
     with clients_lock:
         disconnected_clients = []
@@ -58,13 +52,11 @@ def broadcast_message(message):
             except Exception as e:
                 logging.error(f"Error broadcasting message to client: {e}")
                 disconnected_clients.append(client_socket)
-        # Clean up disconnected clients
         for client in disconnected_clients:
             clients.remove(client)
 
 
 def broadcast_updated_user_list():
-    """Fetches all users and broadcasts the list to all clients."""
     try:
         users = get_all_users_from_db(app_id)
         response = {"action": "all_users", "users": users}
@@ -73,9 +65,7 @@ def broadcast_updated_user_list():
         logging.error(f"Error broadcasting user list: {e}")
 
 
-# --- User and Log Management Functions (Using Firestore) ---
 def add_user_to_db(username, password, role="user"):
-    """Adds a new user to the Firestore 'users' collection."""
     if not db:
         return False, "Database not connected."
     path = f"artifacts/{app_id}/public/data/users"
@@ -95,7 +85,6 @@ def add_user_to_db(username, password, role="user"):
 
 
 def get_user_from_db(app_id, username):
-    """Retrieves a single user document from Firestore."""
     if not db:
         return None
     try:
@@ -112,7 +101,6 @@ def get_user_from_db(app_id, username):
 
 
 def get_all_users_from_db(app_id):
-    """Retrieves all users from the correct Firestore collection."""
     if not db:
         return []
     try:
@@ -125,7 +113,6 @@ def get_all_users_from_db(app_id):
 
 
 def update_user_in_db(app_id, target_username, new_password=None, new_role=None):
-    """Updates a user's password or role in Firestore using a merge operation."""
     if not db:
         return False, "Database not connected."
     path = f"artifacts/{app_id}/public/data/users"
@@ -147,7 +134,6 @@ def update_user_in_db(app_id, target_username, new_password=None, new_role=None)
 
 
 def delete_user_from_db(app_id, target_username):
-    """Deletes a user from the Firestore 'users' collection."""
     if not db:
         return False, "Database not connected."
     path = f"artifacts/{app_id}/public/data/users"
@@ -161,7 +147,6 @@ def delete_user_from_db(app_id, target_username):
 
 
 def log_action(app_id, username, action, message):
-    """Adds a log entry to the Firestore 'logs' collection."""
     if not db:
         return
     path = f"artifacts/{app_id}/public/data/logs"
@@ -178,9 +163,6 @@ def log_action(app_id, username, action, message):
 
 
 def get_admin_logs(app_id, user_tz_name):
-    """
-    Retrieves and converts log timestamps to the user's specific timezone, with an optional offset.
-    """
     if not db:
         return []
     path = f"artifacts/{app_id}/public/data/logs"
@@ -190,13 +172,11 @@ def get_admin_logs(app_id, user_tz_name):
         log_list = []
         user_timezone = pytz.timezone(user_tz_name)
 
-        # Define the offset
         offset_timedelta = timedelta(hours=TIME_OFFSET_HOURS)
 
         for log in logs:
             log_data = log.to_dict()
             if isinstance(log_data.get('timestamp'), datetime):
-                # Apply the offset before conversion
                 utc_dt = log_data['timestamp'].replace(tzinfo=pytz.utc) + offset_timedelta
                 local_dt = utc_dt.astimezone(user_timezone)
                 log_data['timestamp'] = local_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -207,15 +187,12 @@ def get_admin_logs(app_id, user_tz_name):
         return []
 
 
-# --- Server Logic ---
 def handle_client(conn, addr):
-    """Handles a single client connection."""
     logging.info(f"Connected by {addr}")
-    # Add client to the global list for broadcasting
     with clients_lock:
         clients.append(conn)
 
-    current_username = None  # Track the current user for this connection
+    current_username = None
 
     try:
         while True:
@@ -241,7 +218,7 @@ def handle_client(conn, addr):
                                     "message": msg}
                         conn.sendall(json.dumps(response).encode() + b'\n')
                         if success:
-                            time.sleep(0.5)  # Allow Firestore to sync
+                            time.sleep(0.5)
                             broadcast_updated_user_list()
                     elif action == "login":
                         password = message.get("password")
@@ -257,7 +234,6 @@ def handle_client(conn, addr):
                                         "message": "Invalid username or password."}
                         conn.sendall(json.dumps(response).encode() + b'\n')
                     elif action == "update_timezone":
-                        # NEW ACTION: store the user's timezone on the server
                         user_tz = message.get("timezone")
                         if current_username and user_tz:
                             with user_timezones_lock:
@@ -286,7 +262,7 @@ def handle_client(conn, addr):
                                         "message": msg}
                             conn.sendall(json.dumps(response).encode() + b'\n')
                             if success:
-                                time.sleep(0.5)  # Allow Firestore to sync
+                                time.sleep(0.5)
                                 broadcast_updated_user_list()
                         else:
                             response = {"action": "update_user_result", "status": "error", "message": "Access denied."}
@@ -306,11 +282,10 @@ def handle_client(conn, addr):
                             response = {"action": "delete_user_result", "status": "error", "message": "Access denied."}
                             conn.sendall(json.dumps(response).encode() + b'\n')
                     elif action == "get_logs":
-                        # MODIFIED: Get the user's timezone from our new dictionary
                         user_data = get_user_from_db(app_id, username)
                         if user_data and user_data.get('role') == 'admin':
                             with user_timezones_lock:
-                                user_tz_name = user_timezones.get(username, 'UTC')  # Default to UTC
+                                user_tz_name = user_timezones.get(username, 'UTC')
                             logs = get_admin_logs(app_id, user_tz_name)
                             response = {"action": "admin_logs", "logs": logs}
                         else:
@@ -321,13 +296,75 @@ def handle_client(conn, addr):
                         if content:
                             log_action(app_id, username, "chat", content)
                             broadcast_message({"action": "chat", "username": username, "content": content})
+                    elif action == "join_game":
+                        player_id = message.get("player_id")  # Use player ID for game state management
+                        if current_username:
+                            with players_in_game_lock:
+                                players_in_game[current_username] = {
+                                    "position": [375, 550],  # Default start position
+                                    "character_class": message.get("character_class"),
+                                    "character_skill": message.get("character_skill")
+                                }
+                                # Notify all clients of the new player
+                                broadcast_message({
+                                    "action": "player_joined",
+                                    "username": current_username,
+                                    "players": players_in_game
+                                })
+                                logging.info(
+                                    f"User {current_username} joined the game. Total players: {len(players_in_game)}")
+
+                    elif action == "move_player":
+                        position = message.get("position")
+                        if current_username and position:
+                            with players_in_game_lock:
+                                if current_username in players_in_game:
+                                    players_in_game[current_username]["position"] = position
+                                    # Broadcast the updated position to all other clients
+                                    broadcast_message({
+                                        "action": "player_moved",
+                                        "username": current_username,
+                                        "position": position
+                                    })
+
+                    elif action == "player_leave":
+                        if current_username:
+                            with players_in_game_lock:
+                                if current_username in players_in_game:
+                                    del players_in_game[current_username]
+                                    broadcast_message({
+                                        "action": "player_left",
+                                        "username": current_username
+                                    })
+                                    logging.info(
+                                        f"User {current_username} left the game. Total players: {len(players_in_game)}")
+
+                    elif action == "move_player":
+                        position = message.get("position")
+                        if current_username and position:
+                            with players_in_game_lock:
+                                if current_username in players_in_game:
+                                    players_in_game[current_username]["position"] = position
+                                    # Correct way to broadcast the update
+                                    broadcast_message({
+                                        "action": "player_moved",
+                                        "username": current_username,
+                                        "position": position
+                                    })
                 except json.JSONDecodeError as e:
                     logging.error(f"Failed to decode JSON from client: {e}")
     except Exception as e:
         logging.error(f"Error in client handler for {addr}: {e}")
     finally:
         logging.info(f"Client {addr} disconnected.")
-        # Remove client from the global list
+        if current_username:
+            with players_in_game_lock:
+                if current_username in players_in_game:
+                    del players_in_game[current_username]
+                    broadcast_message({
+                        "action": "player_left",
+                        "username": current_username
+                    })
         with clients_lock:
             if conn in clients:
                 clients.remove(conn)
@@ -335,7 +372,6 @@ def handle_client(conn, addr):
 
 
 def main():
-    """Main function to start the server."""
     global clients
 
     HOST = '0.0.0.0'
